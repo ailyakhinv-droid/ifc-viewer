@@ -10,13 +10,20 @@ const loadBtn = document.getElementById('load-btn') as HTMLLabelElement;
 const sampleBtn = document.getElementById('sample-btn') as HTMLButtonElement | null;
 const fitBtn = document.getElementById('fit-btn') as HTMLButtonElement;
 const sectionBtn = document.getElementById('section-btn') as HTMLButtonElement;
+const treeBtn = document.getElementById('tree-btn') as HTMLButtonElement;
+const unhideAllBtn = document.getElementById('unhide-all-btn') as HTMLButtonElement;
+const hiddenCountSpan = document.getElementById('hidden-count') as HTMLSpanElement;
 const wireframeBtn = document.getElementById('wireframe-btn') as HTMLButtonElement;
 const orthoBtn = document.getElementById('ortho-btn') as HTMLButtonElement;
 const statusEl = document.getElementById('status') as HTMLSpanElement;
 const dropOverlay = document.getElementById('drop-overlay') as HTMLDivElement;
+
 const propsPanel = document.getElementById('props-panel') as HTMLDivElement;
 const propsClose = document.getElementById('props-close') as HTMLButtonElement;
 const propsContent = document.getElementById('props-content') as HTMLDivElement;
+const hideElemBtn = document.getElementById('hide-elem-btn') as HTMLButtonElement;
+const isolateElemBtn = document.getElementById('isolate-elem-btn') as HTMLButtonElement;
+
 const loadingOverlay = document.getElementById('loading') as HTMLDivElement;
 const loadingText = document.getElementById('loading-text') as HTMLDivElement;
 
@@ -24,6 +31,7 @@ const loadingText = document.getElementById('loading-text') as HTMLDivElement;
 const sectionPanel = document.getElementById('section-panel') as HTMLDivElement;
 const sectionClose = document.getElementById('section-close') as HTMLButtonElement;
 const sectionReset = document.getElementById('section-reset') as HTMLButtonElement;
+const sectionFitVisible = document.getElementById('section-fit-visible') as HTMLButtonElement;
 const showBoxToggle = document.getElementById('show-box-toggle') as HTMLInputElement;
 
 const clipXMin = document.getElementById('clip-x-min') as HTMLInputElement;
@@ -36,6 +44,13 @@ const clipZMax = document.getElementById('clip-z-max') as HTMLInputElement;
 const xVal = document.getElementById('x-val') as HTMLSpanElement;
 const yVal = document.getElementById('y-val') as HTMLSpanElement;
 const zVal = document.getElementById('z-val') as HTMLSpanElement;
+
+// ─── Model Tree / Categories DOM Elements ─────────────────
+const treePanel = document.getElementById('tree-panel') as HTMLDivElement;
+const treeClose = document.getElementById('tree-close') as HTMLButtonElement;
+const treeContent = document.getElementById('tree-content') as HTMLDivElement;
+const hideHelpersBtn = document.getElementById('hide-helpers-btn') as HTMLButtonElement;
+const treeShowAllBtn = document.getElementById('tree-show-all-btn') as HTMLButtonElement;
 
 // ─── Three.js Scene Setup ──────────────────────────────────
 const scene = new THREE.Scene();
@@ -192,6 +207,32 @@ for (const def of handleDefs) {
   faceHandles.push({ mesh, axis: def.axis, direction: def.direction, name: def.name });
 }
 
+// ─── Model Elements & Visibility State ─────────────────────
+interface ModelElement {
+  mesh: THREE.Mesh;
+  expressID: number;
+  modelID: number;
+  typeName: string;
+  name: string;
+}
+const allModelElements: ModelElement[] = [];
+const hiddenMeshSet = new Set<THREE.Mesh>();
+
+function getVisibleModelBounds(): THREE.Box3 {
+  const box = new THREE.Box3();
+  if (modelGroup) {
+    modelGroup.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.visible) {
+        box.expandByObject(child);
+      }
+    });
+  }
+  if (box.isEmpty()) {
+    box.set(new THREE.Vector3(-5, -5, -5), new THREE.Vector3(5, 5, 5));
+  }
+  return box;
+}
+
 function applyClippingPlanes(enable: boolean) {
   const planes = enable ? clippingPlanes : [];
   if (modelGroup) {
@@ -201,16 +242,20 @@ function applyClippingPlanes(enable: boolean) {
           child.material.forEach((m) => {
             m.clippingPlanes = planes;
             m.clipShadows = true;
+            m.needsUpdate = true;
           });
         } else if (child.material) {
           child.material.clippingPlanes = planes;
           child.material.clipShadows = true;
+          child.material.needsUpdate = true;
         }
       }
     });
   }
   highlightMaterial.clippingPlanes = planes;
+  highlightMaterial.needsUpdate = true;
   selectedMaterial.clippingPlanes = planes;
+  selectedMaterial.needsUpdate = true;
 }
 
 function updateSectionBoxVisual() {
@@ -307,6 +352,24 @@ function resetSectionBox() {
   updateSectionUI();
 }
 
+function fitSectionBoxToVisible() {
+  if (!modelGroup || modelGroup.children.length === 0) return;
+
+  const box = getVisibleModelBounds();
+  const size = box.getSize(new THREE.Vector3());
+  const margin = Math.max(0.1, size.length() * 0.005);
+
+  modelBounds.min.copy(box.min).subScalar(margin);
+  modelBounds.max.copy(box.max).addScalar(margin);
+
+  currentMin.copy(modelBounds.min);
+  currentMax.copy(modelBounds.max);
+
+  updateSectionBoxVisual();
+  updateSectionUI();
+  setStatus('🎯 Границы куба подрезки подогнаны под видимые конструкции');
+}
+
 function toggleSectionBox() {
   if (!modelGroup || modelGroup.children.length === 0) {
     setStatus('⚠️ Сначала загрузите модель');
@@ -317,21 +380,11 @@ function toggleSectionBox() {
   sectionBtn.classList.toggle('active', sectionBoxEnabled);
 
   if (sectionBoxEnabled) {
-    const box = new THREE.Box3().setFromObject(modelGroup);
-    const size = box.getSize(new THREE.Vector3());
-    const margin = Math.max(0.1, size.length() * 0.005);
-    modelBounds.min.copy(box.min).subScalar(margin);
-    modelBounds.max.copy(box.max).addScalar(margin);
-
-    currentMin.copy(modelBounds.min);
-    currentMax.copy(modelBounds.max);
-
+    fitSectionBoxToVisible();
     sectionBoxGroup.visible = showBoxToggle.checked;
     sectionPanel.classList.remove('hidden');
 
     applyClippingPlanes(true);
-    updateSectionBoxVisual();
-    updateSectionUI();
     setStatus('✂️ Куб подрезки включён: двигайте ползунки или тяните грани в 3D');
   } else {
     sectionBoxGroup.visible = false;
@@ -339,6 +392,200 @@ function toggleSectionBox() {
     applyClippingPlanes(false);
     setStatus('✂️ Куб подрезки выключен');
   }
+}
+
+// ─── Visibility Management Functions ──────────────────────
+function setMeshVisibility(mesh: THREE.Mesh, visible: boolean) {
+  mesh.visible = visible;
+  if (visible) {
+    hiddenMeshSet.delete(mesh);
+  } else {
+    hiddenMeshSet.add(mesh);
+  }
+}
+
+function updateHiddenStatus() {
+  const count = hiddenMeshSet.size;
+  hiddenCountSpan.textContent = String(count);
+  if (count > 0) {
+    unhideAllBtn.classList.remove('hidden');
+  } else {
+    unhideAllBtn.classList.add('hidden');
+  }
+  renderTreePanel();
+}
+
+function showAllElements() {
+  for (const elem of allModelElements) {
+    elem.mesh.visible = true;
+  }
+  hiddenMeshSet.clear();
+  updateHiddenStatus();
+  setStatus('👁️ Все элементы снова отображаются');
+
+  if (sectionBoxEnabled) {
+    fitSectionBoxToVisible();
+  }
+}
+
+function hideElementByMesh(mesh: THREE.Mesh) {
+  const id = mesh.userData.expressID;
+  for (const elem of allModelElements) {
+    if (elem.expressID === id) {
+      setMeshVisibility(elem.mesh, false);
+    }
+  }
+
+  if (selectedMesh && selectedMesh.userData.expressID === id) {
+    const orig = originalMaterials.get(selectedMesh);
+    if (orig) selectedMesh.material = orig as THREE.Material;
+    selectedMesh = null;
+    propsPanel.classList.add('hidden');
+  }
+
+  updateHiddenStatus();
+
+  if (sectionBoxEnabled) {
+    fitSectionBoxToVisible();
+  }
+
+  setStatus(`👁️ Элемент #${id} скрыт. Куб подрезки обновлён.`);
+}
+
+function isolateElementByMesh(mesh: THREE.Mesh) {
+  const id = mesh.userData.expressID;
+  for (const elem of allModelElements) {
+    if (elem.expressID === id) {
+      setMeshVisibility(elem.mesh, true);
+    } else {
+      setMeshVisibility(elem.mesh, false);
+    }
+  }
+  updateHiddenStatus();
+  if (sectionBoxEnabled) {
+    fitSectionBoxToVisible();
+  }
+  fitCameraToModel();
+  setStatus(`🎯 Изолирован элемент #${id}`);
+}
+
+function hideAuxiliarySurfaces() {
+  let count = 0;
+  for (const elem of allModelElements) {
+    const nameLower = (elem.name || '').toLowerCase();
+    const typeLower = (elem.typeName || '').toLowerCase();
+
+    // Catch geo-reference, origin, gross volume, sand bedding, site, surface proxies
+    if (
+      nameLower.includes('geo-reference') ||
+      nameLower.includes('origin') ||
+      nameLower.includes('gross volume') ||
+      nameLower.includes('sand bedding') ||
+      typeLower.includes('site') ||
+      typeLower.includes('geographic') ||
+      (typeLower.includes('proxy') && (nameLower.includes('площад') || nameLower.includes('поверхн')))
+    ) {
+      setMeshVisibility(elem.mesh, false);
+      count++;
+    }
+  }
+
+  if (selectedMesh && !selectedMesh.visible) {
+    const orig = originalMaterials.get(selectedMesh);
+    if (orig) selectedMesh.material = orig as THREE.Material;
+    selectedMesh = null;
+    propsPanel.classList.add('hidden');
+  }
+
+  updateHiddenStatus();
+  if (sectionBoxEnabled) {
+    fitSectionBoxToVisible();
+  }
+  fitCameraToModel();
+  setStatus(`🚫 Скрыты вспомогательные поверхности (${count} эл.). Куб подрезки подогнан под здание.`);
+}
+
+function renderTreePanel() {
+  if (!treePanel || treePanel.classList.contains('hidden')) return;
+
+  const categories = new Map<string, ModelElement[]>();
+  for (const elem of allModelElements) {
+    const list = categories.get(elem.typeName) || [];
+    list.push(elem);
+    categories.set(elem.typeName, list);
+  }
+
+  let html = '';
+  for (const [typeName, elements] of categories) {
+    const noneVisible = elements.every((e) => !e.mesh.visible);
+    const eyeClass = noneVisible ? 'off' : '';
+    const eyeIcon = noneVisible ? '👁️‍🗨️' : '👁️';
+
+    html += `
+      <div class="tree-cat-card">
+        <div class="tree-cat-header" data-category="${typeName}">
+          <div class="tree-cat-title">
+            <button class="tree-eye-btn ${eyeClass}" data-cat-eye="${typeName}" title="Скрыть/показать категорию">${eyeIcon}</button>
+            <span>${typeName}</span>
+          </div>
+          <span class="tree-badge">${elements.length}</span>
+        </div>
+        <div class="tree-items-list hidden" id="cat-list-${typeName}">
+          ${elements
+            .map(
+              (e) => `
+            <div class="tree-item-row ${e.mesh.visible ? '' : 'hidden-item'}" data-elem-id="${e.expressID}">
+              <span>${e.name || `#${e.expressID}`}</span>
+              <button class="tree-eye-btn ${e.mesh.visible ? '' : 'off'}" data-item-eye="${e.expressID}">
+                ${e.mesh.visible ? '👁️' : '👁️‍🗨️'}
+              </button>
+            </div>
+          `
+            )
+            .join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  treeContent.innerHTML = html;
+
+  treeContent.querySelectorAll('[data-cat-eye]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const cat = (btn as HTMLElement).dataset.catEye;
+      if (!cat) return;
+      const elems = categories.get(cat) || [];
+      const anyVisible = elems.some((el) => el.mesh.visible);
+      for (const el of elems) {
+        setMeshVisibility(el.mesh, !anyVisible);
+      }
+      updateHiddenStatus();
+      if (sectionBoxEnabled) fitSectionBoxToVisible();
+    });
+  });
+
+  treeContent.querySelectorAll('.tree-cat-header').forEach((header) => {
+    header.addEventListener('click', () => {
+      const cat = (header as HTMLElement).dataset.category;
+      const list = document.getElementById(`cat-list-${cat}`);
+      list?.classList.toggle('hidden');
+    });
+  });
+
+  treeContent.querySelectorAll('[data-item-eye]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = parseInt((btn as HTMLElement).dataset.itemEye || '-1');
+      const elems = allModelElements.filter((el) => el.expressID === id);
+      const anyVisible = elems.some((el) => el.mesh.visible);
+      for (const el of elems) {
+        setMeshVisibility(el.mesh, !anyVisible);
+      }
+      updateHiddenStatus();
+      if (sectionBoxEnabled) fitSectionBoxToVisible();
+    });
+  });
 }
 
 function isPointInsideSectionBox(point: THREE.Vector3): boolean {
@@ -396,6 +643,9 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
         }
       });
       originalMaterials.clear();
+      allModelElements.length = 0;
+      hiddenMeshSet.clear();
+      updateHiddenStatus();
     }
 
     if (currentModelID >= 0) {
@@ -417,6 +667,17 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
     for (let i = 0; i < flatMeshes.size(); i++) {
       const flatMesh = flatMeshes.get(i);
       const expressID = flatMesh.expressID;
+
+      // Extract IFC entity name and type
+      let typeName = 'IfcElement';
+      let elemName = `#${expressID}`;
+      try {
+        const line = api.GetLine(modelID, expressID);
+        typeName = getIfcTypeName(line.type);
+        elemName = line.Name?.value || `${typeName} #${expressID}`;
+      } catch (e) {
+        // Fallback
+      }
 
       for (let j = 0; j < flatMesh.geometries.size(); j++) {
         const placedGeom = flatMesh.geometries.get(j);
@@ -461,6 +722,8 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
           side: THREE.DoubleSide,
           roughness: 0.6,
           metalness: 0.1,
+          clippingPlanes: sectionBoxEnabled ? clippingPlanes : [],
+          clipShadows: true,
         });
 
         const mesh = new THREE.Mesh(geometry, material);
@@ -470,9 +733,19 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
         mat.fromArray(placedGeom.flatTransformation);
         mesh.applyMatrix4(mat);
 
-        // Store expressID for picking
+        // Store IFC metadata for picking, tree, and hiding
         mesh.userData.expressID = expressID;
         mesh.userData.modelID = modelID;
+        mesh.userData.typeName = typeName;
+        mesh.userData.name = elemName;
+
+        allModelElements.push({
+          mesh,
+          expressID,
+          modelID,
+          typeName,
+          name: elemName,
+        });
 
         originalMaterials.set(mesh, material);
         modelGroup.add(mesh);
@@ -483,19 +756,12 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
     }
 
     scene.add(modelGroup);
+    updateHiddenStatus();
     fitCameraToModel();
 
     if (sectionBoxEnabled) {
-      const box = new THREE.Box3().setFromObject(modelGroup);
-      const size = box.getSize(new THREE.Vector3());
-      const margin = Math.max(0.1, size.length() * 0.005);
-      modelBounds.min.copy(box.min).subScalar(margin);
-      modelBounds.max.copy(box.max).addScalar(margin);
-      currentMin.copy(modelBounds.min);
-      currentMax.copy(modelBounds.max);
+      fitSectionBoxToVisible();
       applyClippingPlanes(true);
-      updateSectionBoxVisual();
-      updateSectionUI();
     } else {
       applyClippingPlanes(false);
     }
@@ -515,10 +781,10 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
 function fitCameraToModel() {
   if (!modelGroup || modelGroup.children.length === 0) return;
 
-  const box = new THREE.Box3().setFromObject(modelGroup);
+  const box = getVisibleModelBounds();
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
-  const maxDim = Math.max(size.x, size.y, size.z);
+  const maxDim = Math.max(size.x, size.y, size.z, 1.0);
   const distance = maxDim * 1.5;
 
   perspCamera.position.copy(center).add(new THREE.Vector3(distance * 0.7, distance * 0.7, distance * 0.7));
@@ -902,13 +1168,30 @@ fileInput.addEventListener('change', async () => {
 // ─── Button Events ─────────────────────────────────────────
 fitBtn.addEventListener('click', fitCameraToModel);
 sectionBtn.addEventListener('click', toggleSectionBox);
+treeBtn.addEventListener('click', () => {
+  treePanel.classList.toggle('hidden');
+  renderTreePanel();
+});
+treeClose.addEventListener('click', () => treePanel.classList.add('hidden'));
+unhideAllBtn.addEventListener('click', showAllElements);
+treeShowAllBtn.addEventListener('click', showAllElements);
+hideHelpersBtn.addEventListener('click', hideAuxiliarySurfaces);
+
 wireframeBtn.addEventListener('click', toggleWireframe);
 orthoBtn.addEventListener('click', toggleProjection);
 propsClose.addEventListener('click', () => propsPanel.classList.add('hidden'));
 
+hideElemBtn.addEventListener('click', () => {
+  if (selectedMesh) hideElementByMesh(selectedMesh);
+});
+isolateElemBtn.addEventListener('click', () => {
+  if (selectedMesh) isolateElementByMesh(selectedMesh);
+});
+
 // ─── Section Box Events ───────────────────────────────────
 sectionClose.addEventListener('click', () => toggleSectionBox());
 sectionReset.addEventListener('click', resetSectionBox);
+sectionFitVisible.addEventListener('click', fitSectionBoxToVisible);
 showBoxToggle.addEventListener('change', () => {
   sectionBoxGroup.visible = showBoxToggle.checked && sectionBoxEnabled;
 });

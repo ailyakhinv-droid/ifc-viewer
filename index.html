@@ -18,6 +18,8 @@
           <button id="sample-btn" class="toolbar-btn" title="Загрузить тестовую IFC модель">📦 Пример модели</button>
           <button id="fit-btn" class="toolbar-btn" title="Показать всю модель">🔍 Вписать</button>
           <button id="section-btn" class="toolbar-btn" title="Куб подрезки 3D (Section Box)">✂️ Подрезка</button>
+          <button id="tree-btn" class="toolbar-btn" title="Дерево элементов и видимость категорий">🌲 Дерево</button>
+          <button id="unhide-all-btn" class="toolbar-btn hidden" title="Показать все скрытые элементы">👁️ Показать всё (<span id="hidden-count">0</span>)</button>
           <button id="wireframe-btn" class="toolbar-btn" title="Переключить каркасный режим">🔲 Каркас</button>
           <button id="ortho-btn" class="toolbar-btn" title="Переключить проекцию">📐 Орто</button>
         </div>
@@ -100,9 +102,25 @@
               <input type="checkbox" id="show-box-toggle" checked />
               <span>Показывать куб</span>
             </label>
-            <button id="section-reset" class="section-action-btn">🔄 Сбросить</button>
+            <div class="section-btn-group">
+              <button id="section-fit-visible" class="section-action-btn" title="Подогнать границы куба строго под видимые конструкции (без площадок)">🎯 Под видимое</button>
+              <button id="section-reset" class="section-action-btn">🔄 Сбросить</button>
+            </div>
           </div>
         </div>
+      </div>
+
+      <!-- Model Tree / Categories Panel -->
+      <div id="tree-panel" class="hidden">
+        <div class="panel-header">
+          <span class="panel-title">🌲 Элементы и видимость</span>
+          <button id="tree-close" class="panel-close-btn" title="Закрыть">✕</button>
+        </div>
+        <div class="tree-toolbar">
+          <button id="hide-helpers-btn" class="tree-quick-btn" title="Скрыть геопривязку, поверхности и прокси">🚫 Скрыть поверхности/прокси</button>
+          <button id="tree-show-all-btn" class="tree-quick-btn">👁️ Показать всё</button>
+        </div>
+        <div id="tree-content" class="tree-content"></div>
       </div>
 
       <!-- Properties panel -->
@@ -110,6 +128,10 @@
         <div class="props-header">
           <span>Свойства элемента</span>
           <button id="props-close">✕</button>
+        </div>
+        <div class="props-actions">
+          <button id="hide-elem-btn" class="prop-btn" title="Скрыть выбранный элемент">👁️ Скрыть элемент</button>
+          <button id="isolate-elem-btn" class="prop-btn" title="Изолировать этот элемент">🎯 Изолировать</button>
         </div>
         <div id="props-content"></div>
       </div>
