@@ -17,6 +17,7 @@
           </label>
           <button id="sample-btn" class="toolbar-btn" title="Загрузить тестовую IFC модель">📦 Пример модели</button>
           <button id="fit-btn" class="toolbar-btn" title="Показать всю модель">🔍 Вписать</button>
+          <button id="section-btn" class="toolbar-btn" title="Куб подрезки 3D (Section Box)">✂️ Подрезка</button>
           <button id="wireframe-btn" class="toolbar-btn" title="Переключить каркасный режим">🔲 Каркас</button>
           <button id="ortho-btn" class="toolbar-btn" title="Переключить проекцию">📐 Орто</button>
         </div>
@@ -33,6 +34,74 @@
         <div class="drop-content">
           <div class="drop-icon">📦</div>
           <div>Отпустите файл для загрузки</div>
+        </div>
+      </div>
+
+      <!-- Section Box Panel -->
+      <div id="section-panel" class="hidden">
+        <div class="panel-header">
+          <span class="panel-title">✂️ Куб подрезки</span>
+          <button id="section-close" class="panel-close-btn" title="Закрыть">✕</button>
+        </div>
+        <div class="section-body">
+          <div class="section-control">
+            <div class="control-header">
+              <span class="control-label">↕️ Высота (Y)</span>
+              <span id="y-val" class="control-val">0% – 100%</span>
+            </div>
+            <div class="range-dual">
+              <div class="range-row">
+                <span class="range-sub">Снизу</span>
+                <input type="range" id="clip-y-min" min="0" max="100" value="0" step="0.5" />
+              </div>
+              <div class="range-row">
+                <span class="range-sub">Сверху</span>
+                <input type="range" id="clip-y-max" min="0" max="100" value="100" step="0.5" />
+              </div>
+            </div>
+          </div>
+
+          <div class="section-control">
+            <div class="control-header">
+              <span class="control-label">↔️ Длина (X)</span>
+              <span id="x-val" class="control-val">0% – 100%</span>
+            </div>
+            <div class="range-dual">
+              <div class="range-row">
+                <span class="range-sub">Слева</span>
+                <input type="range" id="clip-x-min" min="0" max="100" value="0" step="0.5" />
+              </div>
+              <div class="range-row">
+                <span class="range-sub">Справа</span>
+                <input type="range" id="clip-x-max" min="0" max="100" value="100" step="0.5" />
+              </div>
+            </div>
+          </div>
+
+          <div class="section-control">
+            <div class="control-header">
+              <span class="control-label">↗️ Ширина (Z)</span>
+              <span id="z-val" class="control-val">0% – 100%</span>
+            </div>
+            <div class="range-dual">
+              <div class="range-row">
+                <span class="range-sub">Спереди</span>
+                <input type="range" id="clip-z-min" min="0" max="100" value="0" step="0.5" />
+              </div>
+              <div class="range-row">
+                <span class="range-sub">Сзади</span>
+                <input type="range" id="clip-z-max" min="0" max="100" value="100" step="0.5" />
+              </div>
+            </div>
+          </div>
+
+          <div class="section-footer">
+            <label class="section-checkbox">
+              <input type="checkbox" id="show-box-toggle" checked />
+              <span>Показывать куб</span>
+            </label>
+            <button id="section-reset" class="section-action-btn">🔄 Сбросить</button>
+          </div>
         </div>
       </div>
 

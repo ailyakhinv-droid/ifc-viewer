@@ -9,6 +9,7 @@ const fileInput = document.getElementById('file-input') as HTMLInputElement;
 const loadBtn = document.getElementById('load-btn') as HTMLLabelElement;
 const sampleBtn = document.getElementById('sample-btn') as HTMLButtonElement | null;
 const fitBtn = document.getElementById('fit-btn') as HTMLButtonElement;
+const sectionBtn = document.getElementById('section-btn') as HTMLButtonElement;
 const wireframeBtn = document.getElementById('wireframe-btn') as HTMLButtonElement;
 const orthoBtn = document.getElementById('ortho-btn') as HTMLButtonElement;
 const statusEl = document.getElementById('status') as HTMLSpanElement;
@@ -18,6 +19,23 @@ const propsClose = document.getElementById('props-close') as HTMLButtonElement;
 const propsContent = document.getElementById('props-content') as HTMLDivElement;
 const loadingOverlay = document.getElementById('loading') as HTMLDivElement;
 const loadingText = document.getElementById('loading-text') as HTMLDivElement;
+
+// ─── Section Box DOM Elements ─────────────────────────────
+const sectionPanel = document.getElementById('section-panel') as HTMLDivElement;
+const sectionClose = document.getElementById('section-close') as HTMLButtonElement;
+const sectionReset = document.getElementById('section-reset') as HTMLButtonElement;
+const showBoxToggle = document.getElementById('show-box-toggle') as HTMLInputElement;
+
+const clipXMin = document.getElementById('clip-x-min') as HTMLInputElement;
+const clipXMax = document.getElementById('clip-x-max') as HTMLInputElement;
+const clipYMin = document.getElementById('clip-y-min') as HTMLInputElement;
+const clipYMax = document.getElementById('clip-y-max') as HTMLInputElement;
+const clipZMin = document.getElementById('clip-z-min') as HTMLInputElement;
+const clipZMax = document.getElementById('clip-z-max') as HTMLInputElement;
+
+const xVal = document.getElementById('x-val') as HTMLSpanElement;
+const yVal = document.getElementById('y-val') as HTMLSpanElement;
+const zVal = document.getElementById('z-val') as HTMLSpanElement;
 
 // ─── Three.js Scene Setup ──────────────────────────────────
 const scene = new THREE.Scene();
@@ -48,6 +66,7 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.localClippingEnabled = true;
 
 // Orbit controls
 const controls = new OrbitControls(activeCamera, renderer.domElement);
@@ -93,6 +112,244 @@ const selectedMaterial = new THREE.MeshStandardMaterial({
 
 // Store original materials
 const originalMaterials = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+
+// ─── Section Box (3D Clipping) State & Objects ────────────
+let sectionBoxEnabled = false;
+const modelBounds = new THREE.Box3();
+const currentMin = new THREE.Vector3();
+const currentMax = new THREE.Vector3();
+
+// 6 Planes (points with dot product >= 0 are kept):
+// +X keeps x >= min.x, -X keeps x <= max.x
+// +Y keeps y >= min.y, -Y keeps y <= max.y
+// +Z keeps z >= min.z, -Z keeps z <= max.z
+const clippingPlanes = [
+  new THREE.Plane(new THREE.Vector3(1, 0, 0), 0),
+  new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0),
+  new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
+  new THREE.Plane(new THREE.Vector3(0, -1, 0), 0),
+  new THREE.Plane(new THREE.Vector3(0, 0, 1), 0),
+  new THREE.Plane(new THREE.Vector3(0, 0, -1), 0),
+];
+
+const sectionBoxGroup = new THREE.Group();
+sectionBoxGroup.visible = false;
+scene.add(sectionBoxGroup);
+
+// Semi-transparent box volume
+const boxMaterial = new THREE.MeshBasicMaterial({
+  color: 0x00d2ff,
+  transparent: true,
+  opacity: 0.06,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+});
+const boxMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), boxMaterial);
+sectionBoxGroup.add(boxMesh);
+
+// Box border edges
+const edgesGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
+const edgesMaterial = new THREE.LineBasicMaterial({
+  color: 0x00f0ff,
+  transparent: true,
+  opacity: 0.85,
+});
+const boxEdges = new THREE.LineSegments(edgesGeometry, edgesMaterial);
+sectionBoxGroup.add(boxEdges);
+
+// 6 Interactive Face Handles for 3D dragging
+interface FaceHandle {
+  mesh: THREE.Mesh;
+  axis: 'x' | 'y' | 'z';
+  direction: 1 | -1;
+  name: string;
+}
+const faceHandles: FaceHandle[] = [];
+
+const handleGeometry = new THREE.PlaneGeometry(1, 1);
+const handleMaterial = new THREE.MeshBasicMaterial({
+  color: 0x00f0ff,
+  transparent: true,
+  opacity: 0.35,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+});
+
+const handleDefs: { name: string; axis: 'x' | 'y' | 'z'; direction: 1 | -1; rot: [number, number, number] }[] = [
+  { name: '+x', axis: 'x', direction: 1, rot: [0, Math.PI / 2, 0] },
+  { name: '-x', axis: 'x', direction: -1, rot: [0, -Math.PI / 2, 0] },
+  { name: '+y', axis: 'y', direction: 1, rot: [-Math.PI / 2, 0, 0] },
+  { name: '-y', axis: 'y', direction: -1, rot: [Math.PI / 2, 0, 0] },
+  { name: '+z', axis: 'z', direction: 1, rot: [0, 0, 0] },
+  { name: '-z', axis: 'z', direction: -1, rot: [0, Math.PI, 0] },
+];
+
+for (const def of handleDefs) {
+  const mesh = new THREE.Mesh(handleGeometry, handleMaterial.clone());
+  mesh.rotation.set(...def.rot);
+  mesh.userData = { isHandle: true, axis: def.axis, direction: def.direction, name: def.name };
+  sectionBoxGroup.add(mesh);
+  faceHandles.push({ mesh, axis: def.axis, direction: def.direction, name: def.name });
+}
+
+function applyClippingPlanes(enable: boolean) {
+  const planes = enable ? clippingPlanes : [];
+  if (modelGroup) {
+    modelGroup.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        if (Array.isArray(child.material)) {
+          child.material.forEach((m) => {
+            m.clippingPlanes = planes;
+            m.clipShadows = true;
+          });
+        } else if (child.material) {
+          child.material.clippingPlanes = planes;
+          child.material.clipShadows = true;
+        }
+      }
+    });
+  }
+  highlightMaterial.clippingPlanes = planes;
+  selectedMaterial.clippingPlanes = planes;
+}
+
+function updateSectionBoxVisual() {
+  const size = new THREE.Vector3().subVectors(currentMax, currentMin);
+  const center = new THREE.Vector3().addVectors(currentMin, currentMax).multiplyScalar(0.5);
+
+  boxMesh.position.copy(center);
+  boxMesh.scale.copy(size);
+
+  boxEdges.position.copy(center);
+  boxEdges.scale.copy(size);
+
+  const minDim = Math.max(0.5, Math.min(size.x, size.y, size.z) * 0.35);
+
+  for (const h of faceHandles) {
+    if (h.axis === 'x') {
+      const x = h.direction === 1 ? currentMax.x : currentMin.x;
+      h.mesh.position.set(x, center.y, center.z);
+      h.mesh.scale.set(Math.min(minDim, size.z * 0.8), Math.min(minDim, size.y * 0.8), 1);
+    } else if (h.axis === 'y') {
+      const y = h.direction === 1 ? currentMax.y : currentMin.y;
+      h.mesh.position.set(center.x, y, center.z);
+      h.mesh.scale.set(Math.min(minDim, size.x * 0.8), Math.min(minDim, size.z * 0.8), 1);
+    } else if (h.axis === 'z') {
+      const z = h.direction === 1 ? currentMax.z : currentMin.z;
+      h.mesh.position.set(center.x, center.y, z);
+      h.mesh.scale.set(Math.min(minDim, size.x * 0.8), Math.min(minDim, size.y * 0.8), 1);
+    }
+  }
+
+  clippingPlanes[0].set(new THREE.Vector3(1, 0, 0), -currentMin.x);
+  clippingPlanes[1].set(new THREE.Vector3(-1, 0, 0), currentMax.x);
+  clippingPlanes[2].set(new THREE.Vector3(0, 1, 0), -currentMin.y);
+  clippingPlanes[3].set(new THREE.Vector3(0, -1, 0), currentMax.y);
+  clippingPlanes[4].set(new THREE.Vector3(0, 0, 1), -currentMin.z);
+  clippingPlanes[5].set(new THREE.Vector3(0, 0, -1), currentMax.z);
+}
+
+function updateSectionUI() {
+  const totalSize = new THREE.Vector3().subVectors(modelBounds.max, modelBounds.min);
+
+  const xMinPct = totalSize.x > 0 ? ((currentMin.x - modelBounds.min.x) / totalSize.x) * 100 : 0;
+  const xMaxPct = totalSize.x > 0 ? ((currentMax.x - modelBounds.min.x) / totalSize.x) * 100 : 100;
+  const yMinPct = totalSize.y > 0 ? ((currentMin.y - modelBounds.min.y) / totalSize.y) * 100 : 0;
+  const yMaxPct = totalSize.y > 0 ? ((currentMax.y - modelBounds.min.y) / totalSize.y) * 100 : 100;
+  const zMinPct = totalSize.z > 0 ? ((currentMin.z - modelBounds.min.z) / totalSize.z) * 100 : 0;
+  const zMaxPct = totalSize.z > 0 ? ((currentMax.z - modelBounds.min.z) / totalSize.z) * 100 : 100;
+
+  clipXMin.value = xMinPct.toFixed(1);
+  clipXMax.value = xMaxPct.toFixed(1);
+  clipYMin.value = yMinPct.toFixed(1);
+  clipYMax.value = yMaxPct.toFixed(1);
+  clipZMin.value = zMinPct.toFixed(1);
+  clipZMax.value = zMaxPct.toFixed(1);
+
+  xVal.textContent = `${Math.round(xMinPct)}% – ${Math.round(xMaxPct)}%`;
+  yVal.textContent = `${Math.round(yMinPct)}% – ${Math.round(yMaxPct)}%`;
+  zVal.textContent = `${Math.round(zMinPct)}% – ${Math.round(zMaxPct)}%`;
+}
+
+function onSliderInput() {
+  const totalSize = new THREE.Vector3().subVectors(modelBounds.max, modelBounds.min);
+
+  let x0 = parseFloat(clipXMin.value) / 100;
+  let x1 = parseFloat(clipXMax.value) / 100;
+  if (x0 > x1) { const t = x0; x0 = x1; x1 = t; }
+
+  let y0 = parseFloat(clipYMin.value) / 100;
+  let y1 = parseFloat(clipYMax.value) / 100;
+  if (y0 > y1) { const t = y0; y0 = y1; y1 = t; }
+
+  let z0 = parseFloat(clipZMin.value) / 100;
+  let z1 = parseFloat(clipZMax.value) / 100;
+  if (z0 > z1) { const t = z0; z0 = z1; z1 = t; }
+
+  currentMin.x = modelBounds.min.x + x0 * totalSize.x;
+  currentMax.x = modelBounds.min.x + x1 * totalSize.x;
+  currentMin.y = modelBounds.min.y + y0 * totalSize.y;
+  currentMax.y = modelBounds.min.y + y1 * totalSize.y;
+  currentMin.z = modelBounds.min.z + z0 * totalSize.z;
+  currentMax.z = modelBounds.min.z + z1 * totalSize.z;
+
+  xVal.textContent = `${Math.round(x0 * 100)}% – ${Math.round(x1 * 100)}%`;
+  yVal.textContent = `${Math.round(y0 * 100)}% – ${Math.round(y1 * 100)}%`;
+  zVal.textContent = `${Math.round(z0 * 100)}% – ${Math.round(z1 * 100)}%`;
+
+  updateSectionBoxVisual();
+}
+
+function resetSectionBox() {
+  currentMin.copy(modelBounds.min);
+  currentMax.copy(modelBounds.max);
+  updateSectionBoxVisual();
+  updateSectionUI();
+}
+
+function toggleSectionBox() {
+  if (!modelGroup || modelGroup.children.length === 0) {
+    setStatus('⚠️ Сначала загрузите модель');
+    return;
+  }
+
+  sectionBoxEnabled = !sectionBoxEnabled;
+  sectionBtn.classList.toggle('active', sectionBoxEnabled);
+
+  if (sectionBoxEnabled) {
+    const box = new THREE.Box3().setFromObject(modelGroup);
+    const size = box.getSize(new THREE.Vector3());
+    const margin = Math.max(0.1, size.length() * 0.005);
+    modelBounds.min.copy(box.min).subScalar(margin);
+    modelBounds.max.copy(box.max).addScalar(margin);
+
+    currentMin.copy(modelBounds.min);
+    currentMax.copy(modelBounds.max);
+
+    sectionBoxGroup.visible = showBoxToggle.checked;
+    sectionPanel.classList.remove('hidden');
+
+    applyClippingPlanes(true);
+    updateSectionBoxVisual();
+    updateSectionUI();
+    setStatus('✂️ Куб подрезки включён: двигайте ползунки или тяните грани в 3D');
+  } else {
+    sectionBoxGroup.visible = false;
+    sectionPanel.classList.add('hidden');
+    applyClippingPlanes(false);
+    setStatus('✂️ Куб подрезки выключен');
+  }
+}
+
+function isPointInsideSectionBox(point: THREE.Vector3): boolean {
+  if (!sectionBoxEnabled) return true;
+  const eps = 0.01;
+  return (
+    point.x >= currentMin.x - eps && point.x <= currentMax.x + eps &&
+    point.y >= currentMin.y - eps && point.y <= currentMax.y + eps &&
+    point.z >= currentMin.z - eps && point.z <= currentMax.z + eps
+  );
+}
 
 // ─── web-ifc init ──────────────────────────────────────────
 async function initIfcAPI(): Promise<WebIFC.IfcAPI> {
@@ -228,6 +485,21 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
     scene.add(modelGroup);
     fitCameraToModel();
 
+    if (sectionBoxEnabled) {
+      const box = new THREE.Box3().setFromObject(modelGroup);
+      const size = box.getSize(new THREE.Vector3());
+      const margin = Math.max(0.1, size.length() * 0.005);
+      modelBounds.min.copy(box.min).subScalar(margin);
+      modelBounds.max.copy(box.max).addScalar(margin);
+      currentMin.copy(modelBounds.min);
+      currentMax.copy(modelBounds.max);
+      applyClippingPlanes(true);
+      updateSectionBoxVisual();
+      updateSectionUI();
+    } else {
+      applyClippingPlanes(false);
+    }
+
     const meshCount = modelGroup.children.length;
     setStatus(`✅ ${fileName} — ${meshCount} элементов`);
 
@@ -281,7 +553,8 @@ function onMouseMove(event: MouseEvent) {
 
   if (!modelGroup) return;
 
-  const intersects = raycaster.intersectObjects(modelGroup.children, false);
+  const rawIntersects = raycaster.intersectObjects(modelGroup.children, false);
+  const intersects = rawIntersects.filter((hit) => isPointInsideSectionBox(hit.point));
 
   // Restore hover
   if (hoveredMesh && hoveredMesh !== selectedMesh) {
@@ -309,7 +582,8 @@ function onMouseClick(event: MouseEvent) {
   raycaster.setFromCamera(mouse, activeCamera);
   if (!modelGroup) return;
 
-  const intersects = raycaster.intersectObjects(modelGroup.children, false);
+  const rawIntersects = raycaster.intersectObjects(modelGroup.children, false);
+  const intersects = rawIntersects.filter((hit) => isPointInsideSectionBox(hit.point));
 
   // Deselect previous
   if (selectedMesh) {
@@ -325,6 +599,104 @@ function onMouseClick(event: MouseEvent) {
     showProperties(hit.userData.expressID, hit.userData.modelID);
   } else {
     propsPanel.classList.add('hidden');
+  }
+}
+
+// ─── 3D Section Box Pointer Interaction ────────────────────
+let activeHandle: FaceHandle | null = null;
+let hoveredHandle: FaceHandle | null = null;
+const dragPlane = new THREE.Plane();
+const dragPlaneIntersect = new THREE.Vector3();
+
+function onPointerDown(event: PointerEvent) {
+  if (event.button !== 0) return;
+
+  if (sectionBoxEnabled && showBoxToggle.checked) {
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouse, activeCamera);
+
+    const handleMeshes = faceHandles.map((h) => h.mesh);
+    const hits = raycaster.intersectObjects(handleMeshes, false);
+
+    if (hits.length > 0) {
+      const hit = hits[0];
+      const handle = faceHandles.find((h) => h.mesh === hit.object);
+      if (handle) {
+        activeHandle = handle;
+        controls.enabled = false;
+
+        const camDir = new THREE.Vector3();
+        activeCamera.getWorldDirection(camDir);
+        dragPlane.setFromNormalAndCoplanarPoint(camDir.negate(), hit.point);
+        event.stopPropagation();
+        return;
+      }
+    }
+  }
+
+  onMouseClick(event);
+}
+
+function onPointerMove(event: PointerEvent) {
+  const rect = canvas.getBoundingClientRect();
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouse, activeCamera);
+
+  if (activeHandle) {
+    if (raycaster.ray.intersectPlane(dragPlane, dragPlaneIntersect)) {
+      const axis = activeHandle.axis;
+      const dir = activeHandle.direction;
+      const val = dragPlaneIntersect[axis];
+
+      if (dir === 1) {
+        const clamped = Math.max(currentMin[axis] + 0.1, Math.min(modelBounds.max[axis], val));
+        currentMax[axis] = clamped;
+      } else {
+        const clamped = Math.min(currentMax[axis] - 0.1, Math.max(modelBounds.min[axis], val));
+        currentMin[axis] = clamped;
+      }
+
+      updateSectionBoxVisual();
+      updateSectionUI();
+    }
+    canvas.style.cursor = 'grabbing';
+    return;
+  }
+
+  // Hover over face handles
+  if (sectionBoxEnabled && showBoxToggle.checked) {
+    const handleMeshes = faceHandles.map((h) => h.mesh);
+    const hits = raycaster.intersectObjects(handleMeshes, false);
+
+    if (hoveredHandle) {
+      (hoveredHandle.mesh.material as THREE.MeshBasicMaterial).color.set(0x00f0ff);
+      (hoveredHandle.mesh.material as THREE.MeshBasicMaterial).opacity = 0.35;
+      hoveredHandle = null;
+    }
+
+    if (hits.length > 0) {
+      const handle = faceHandles.find((h) => h.mesh === hits[0].object);
+      if (handle) {
+        hoveredHandle = handle;
+        (handle.mesh.material as THREE.MeshBasicMaterial).color.set(0xe94560);
+        (handle.mesh.material as THREE.MeshBasicMaterial).opacity = 0.75;
+        canvas.style.cursor = 'grab';
+        return;
+      }
+    }
+  }
+
+  onMouseMove(event);
+}
+
+function onPointerUp() {
+  if (activeHandle) {
+    activeHandle = null;
+    controls.enabled = true;
+    canvas.style.cursor = 'default';
   }
 }
 
@@ -529,9 +901,20 @@ fileInput.addEventListener('change', async () => {
 
 // ─── Button Events ─────────────────────────────────────────
 fitBtn.addEventListener('click', fitCameraToModel);
+sectionBtn.addEventListener('click', toggleSectionBox);
 wireframeBtn.addEventListener('click', toggleWireframe);
 orthoBtn.addEventListener('click', toggleProjection);
 propsClose.addEventListener('click', () => propsPanel.classList.add('hidden'));
+
+// ─── Section Box Events ───────────────────────────────────
+sectionClose.addEventListener('click', () => toggleSectionBox());
+sectionReset.addEventListener('click', resetSectionBox);
+showBoxToggle.addEventListener('change', () => {
+  sectionBoxGroup.visible = showBoxToggle.checked && sectionBoxEnabled;
+});
+[clipXMin, clipXMax, clipYMin, clipYMax, clipZMin, clipZMax].forEach((input) => {
+  input.addEventListener('input', onSliderInput);
+});
 
 // ─── Sample Model Loading ─────────────────────────────────
 async function loadSampleModel() {
@@ -552,9 +935,10 @@ async function loadSampleModel() {
 
 sampleBtn?.addEventListener('click', loadSampleModel);
 
-// ─── Mouse Events ──────────────────────────────────────────
-canvas.addEventListener('mousemove', onMouseMove);
-canvas.addEventListener('click', onMouseClick);
+// ─── Pointer & Mouse Events ────────────────────────────────
+canvas.addEventListener('pointerdown', onPointerDown);
+window.addEventListener('pointermove', onPointerMove);
+window.addEventListener('pointerup', onPointerUp);
 
 // ─── Resize ────────────────────────────────────────────────
 window.addEventListener('resize', () => {
