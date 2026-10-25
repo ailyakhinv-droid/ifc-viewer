@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IFC Viewer</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Toolbar -->
+      <div id="toolbar">
+        <div class="toolbar-group">
+          <label id="load-btn" class="toolbar-btn" title="Загрузить IFC-файл">
+            <input type="file" id="file-input" accept=".ifc" hidden />
+            📂 Загрузить IFC
+          </label>
+          <button id="sample-btn" class="toolbar-btn" title="Загрузить тестовую IFC модель">📦 Пример модели</button>
+          <button id="fit-btn" class="toolbar-btn" title="Показать всю модель">🔍 Вписать</button>
+          <button id="wireframe-btn" class="toolbar-btn" title="Переключить каркасный режим">🔲 Каркас</button>
+          <button id="ortho-btn" class="toolbar-btn" title="Переключить проекцию">📐 Орто</button>
+        </div>
+        <div class="toolbar-group">
+          <span id="status">Перетащите IFC-файл сюда или нажмите «Загрузить IFC»</span>
+        </div>
+      </div>
+
+      <!-- 3D Canvas -->
+      <canvas id="three-canvas"></canvas>
+
+      <!-- Drop overlay -->
+      <div id="drop-overlay" class="hidden">
+        <div class="drop-content">
+          <div class="drop-icon">📦</div>
+          <div>Отпустите файл для загрузки</div>
+        </div>
+      </div>
+
+      <!-- Properties panel -->
+      <div id="props-panel" class="hidden">
+        <div class="props-header">
+          <span>Свойства элемента</span>
+          <button id="props-close">✕</button>
+        </div>
+        <div id="props-content"></div>
+      </div>
+
+      <!-- Loading spinner -->
+      <div id="loading" class="hidden">
+        <div class="spinner"></div>
+        <div id="loading-text">Загрузка модели...</div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
