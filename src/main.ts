@@ -554,6 +554,11 @@ function isFrameElement(name: string, typeName: string): boolean {
   return isProxyOrGeneric && hasFrameKeyword;
 }
 
+function isSocketElement(name: string): boolean {
+  const n = (name || '').toLowerCase();
+  return n.includes('розетк') || n.includes('рамк') || n.includes('выключател');
+}
+
 let facadeMode: 0 | 1 | 2 = 0; // 0 = 100%, 1 = 22% (X-ray), 2 = hidden
 
 function isFacadeElement(name: string, typeName: string): boolean {
@@ -624,8 +629,20 @@ function toggleFacadeMode() {
 }
 
 function getAssemblyElements(target: ModelElement): ModelElement[] {
-  if (assemblyModeEnabled && isFrameElement(target.name, target.typeName)) {
-    return allModelElements.filter((e) => isFrameElement(e.name, e.typeName));
+  if (assemblyModeEnabled) {
+    if (isFrameElement(target.name, target.typeName)) {
+      return allModelElements.filter((e) => isFrameElement(e.name, e.typeName));
+    }
+    if (isSocketElement(target.name)) {
+      const targetPos = new THREE.Vector3();
+      target.mesh.getWorldPosition(targetPos);
+      return allModelElements.filter((e) => {
+        if (!isSocketElement(e.name)) return false;
+        const pos = new THREE.Vector3();
+        e.mesh.getWorldPosition(pos);
+        return targetPos.distanceTo(pos) < 0.25;
+      });
+    }
   }
   // For any individual element (e.g. wall, window, slab), select ALL sub-meshes sharing its expressID (all layers!)
   return allModelElements.filter((e) => e.expressID === target.expressID);
@@ -653,8 +670,9 @@ function clearSelection() {
 function selectElementOrAssembly(elem: ModelElement) {
   clearSelection();
   const isFrame = assemblyModeEnabled && isFrameElement(elem.name, elem.typeName);
-  const targets = isFrame
-    ? allModelElements.filter((e) => isFrameElement(e.name, e.typeName))
+  const isSocket = assemblyModeEnabled && isSocketElement(elem.name);
+  const targets = (isFrame || isSocket)
+    ? getAssemblyElements(elem)
     : allModelElements.filter((e) => e.expressID === elem.expressID);
 
   for (const item of targets) {
@@ -665,8 +683,10 @@ function selectElementOrAssembly(elem: ModelElement) {
   }
   selectedMesh = selectedMeshes[0] || null;
 
-  if (isFrame) {
-    const mainProxy = targets.find((e) => e.name.toLowerCase().includes('карка')) || elem;
+  if (isFrame || isSocket) {
+    const mainProxy = isFrame
+      ? (targets.find((e) => e.name.toLowerCase().includes('карка')) || elem)
+      : elem;
     showAssemblyProperties(mainProxy, targets);
   } else {
     showProperties(elem.expressID, elem.modelID);
@@ -1400,9 +1420,16 @@ function showAssemblyProperties(mainElem: ModelElement, assembly: ModelElement[]
   propsContent.innerHTML = '';
 
   const isFrame = isFrameElement(mainElem.name, mainElem.typeName);
-  const title = isFrame ? '📦 Каркас блок-контейнера' : '📦 Сборка элементов';
+  const isSocket = isSocketElement(mainElem.name);
+  const title = isFrame
+    ? '📦 Каркас блок-контейнера'
+    : isSocket
+    ? '🔌 Блок розеток'
+    : '📦 Сборка элементов';
   const subtitle = isFrame
     ? 'Несущий стальной каркас модуля 6000×2400×2600 мм (стойки, фитинги, швеллеры обвязки пола и потолка)'
+    : isSocket
+    ? 'Комплектная розетка (рамка + механизм розетки 220V)'
     : mainElem.name;
 
   let html = `
@@ -1424,6 +1451,23 @@ function showAssemblyProperties(mainElem: ModelElement, assembly: ModelElement[]
       psets = getElementPropertySets(item.modelID, item.expressID);
       if (psets.length > 0) break;
     }
+  }
+
+  // If socket assembly has no Pset exported from Revit, supply Arctic specs
+  if (psets.length === 0 && isSocket) {
+    psets = [
+      {
+        name: 'Pset_Арктика_Розетка',
+        properties: [
+          { name: 'Материал в реальности', value: 'Негорючий термопласт / степень защиты IP54' },
+          { name: 'Материал в макете', value: 'Картон / 3D-печать' },
+          { name: 'Рабочее напряжение', value: '220 В' },
+          { name: 'Защитная крышка от брызг и пыли', value: 'IP54 (пыле- и влагозащита)' },
+          { name: 'Заземление', value: 'Да (Schuko)' },
+          { name: 'Защитные шторки', value: 'Да' },
+        ],
+      },
+    ];
   }
 
   if (psets.length > 0) {
