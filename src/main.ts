@@ -558,15 +558,13 @@ let facadeMode: 0 | 1 | 2 = 0; // 0 = 100%, 1 = 22% (X-ray), 2 = hidden
 
 function isFacadeElement(name: string, typeName: string): boolean {
   const n = (name || '').toLowerCase();
-  const t = (typeName || '').toLowerCase();
+  // Only exterior envelope elements (sandwich panels, roof cover, trim).
+  // Interior finish walls ('Стена_Отделка внутренняя') remain distinct interior elements!
   return (
-    t.includes('wall') ||
-    t.includes('стена') ||
-    t.includes('стены') ||
     n.includes('сэндвич') ||
-    n.includes('стена') ||
     n.includes('кровл') ||
-    n.includes('обшивка потолка')
+    n.includes('наличник') ||
+    n.includes('фасад')
   );
 }
 
@@ -1106,7 +1104,16 @@ function onMouseMove(event: MouseEvent) {
   hoveredMesh = null;
 
   if (intersects.length > 0) {
-    const hit = intersects[0].object as THREE.Mesh;
+    let targetHit = intersects[0];
+    if (facadeMode === 1) {
+      const innerHit = intersects.find((hit) => {
+        const el = allModelElements.find((e) => e.mesh === hit.object);
+        return el && !isFacadeElement(el.name, el.typeName);
+      });
+      if (innerHit) targetHit = innerHit;
+    }
+
+    const hit = targetHit.object as THREE.Mesh;
     const elem = allModelElements.find((e) => e.mesh === hit);
     const targets = elem ? getAssemblyElements(elem).map((e) => e.mesh) : [hit];
 
@@ -1134,7 +1141,16 @@ function onMouseClick(event: MouseEvent) {
   const intersects = rawIntersects.filter((hit) => isPointInsideSectionBox(hit.point));
 
   if (intersects.length > 0) {
-    const hit = intersects[0].object as THREE.Mesh;
+    let targetHit = intersects[0];
+    if (facadeMode === 1) {
+      const innerHit = intersects.find((hit) => {
+        const el = allModelElements.find((e) => e.mesh === hit.object);
+        return el && !isFacadeElement(el.name, el.typeName);
+      });
+      if (innerHit) targetHit = innerHit;
+    }
+
+    const hit = targetHit.object as THREE.Mesh;
     const elem = allModelElements.find((e) => e.mesh === hit);
     if (elem) {
       selectElementOrAssembly(elem);
