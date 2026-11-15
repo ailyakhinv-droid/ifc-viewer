@@ -13,6 +13,7 @@ const sectionBtn = document.getElementById('section-btn') as HTMLButtonElement;
 const treeBtn = document.getElementById('tree-btn') as HTMLButtonElement;
 const unhideAllBtn = document.getElementById('unhide-all-btn') as HTMLButtonElement;
 const hiddenCountSpan = document.getElementById('hidden-count') as HTMLSpanElement;
+const assemblyBtn = document.getElementById('assembly-btn') as HTMLButtonElement | null;
 const wireframeBtn = document.getElementById('wireframe-btn') as HTMLButtonElement;
 const orthoBtn = document.getElementById('ortho-btn') as HTMLButtonElement;
 const statusEl = document.getElementById('status') as HTMLSpanElement;
@@ -112,7 +113,10 @@ let currentModelID = -1;
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 let hoveredMesh: THREE.Mesh | null = null;
+let hoveredMeshes: THREE.Mesh[] = [];
 let selectedMesh: THREE.Mesh | null = null;
+let selectedMeshes: THREE.Mesh[] = [];
+let assemblyModeEnabled = true;
 const highlightMaterial = new THREE.MeshStandardMaterial({
   color: 0xe94560,
   transparent: true,
@@ -430,44 +434,50 @@ function showAllElements() {
 }
 
 function hideElementByMesh(mesh: THREE.Mesh) {
-  const id = mesh.userData.expressID;
-  for (const elem of allModelElements) {
-    if (elem.expressID === id) {
-      setMeshVisibility(elem.mesh, false);
+  const isMulti = selectedMeshes.includes(mesh) && selectedMeshes.length > 1;
+  const targets = isMulti ? [...selectedMeshes] : [mesh];
+  const count = targets.length;
+
+  for (const m of targets) {
+    const id = m.userData.expressID;
+    for (const elem of allModelElements) {
+      if (elem.expressID === id) {
+        setMeshVisibility(elem.mesh, false);
+      }
     }
   }
 
-  if (selectedMesh && selectedMesh.userData.expressID === id) {
-    const orig = originalMaterials.get(selectedMesh);
-    if (orig) selectedMesh.material = orig as THREE.Material;
-    selectedMesh = null;
-    propsPanel.classList.add('hidden');
-  }
-
+  clearSelection();
+  propsPanel.classList.add('hidden');
   updateHiddenStatus();
 
   if (sectionBoxEnabled) {
     fitSectionBoxToVisible();
   }
 
-  setStatus(`👁️ Элемент #${id} скрыт. Куб подрезки обновлён.`);
+  setStatus(isMulti ? `👁️ Скрыта сборка (${count} элементов). Куб подрезки обновлён.` : `👁️ Элемент #${mesh.userData.expressID} скрыт. Куб подрезки обновлён.`);
 }
 
 function isolateElementByMesh(mesh: THREE.Mesh) {
-  const id = mesh.userData.expressID;
+  const isMulti = selectedMeshes.includes(mesh) && selectedMeshes.length > 1;
+  const targets = isMulti ? [...selectedMeshes] : [mesh];
+  const count = targets.length;
+  const targetIds = new Set(targets.map((m) => m.userData.expressID));
+
   for (const elem of allModelElements) {
-    if (elem.expressID === id) {
+    if (targetIds.has(elem.expressID)) {
       setMeshVisibility(elem.mesh, true);
     } else {
       setMeshVisibility(elem.mesh, false);
     }
   }
+
   updateHiddenStatus();
   if (sectionBoxEnabled) {
     fitSectionBoxToVisible();
   }
   fitCameraToModel();
-  setStatus(`🎯 Изолирован элемент #${id}`);
+  setStatus(isMulti ? `🎯 Изолирована сборка (${count} элементов)` : `🎯 Изолирован элемент #${mesh.userData.expressID}`);
 }
 
 function hideAuxiliarySurfaces() {
@@ -522,21 +532,63 @@ function hideAuxiliarySurfaces() {
   setStatus(`🚫 Скрыты вспомогательные поверхности (${count} эл.). Куб подрезки подогнан.`);
 }
 
+function isFrameElement(name: string, typeName: string): boolean {
+  const n = (name || '').toLowerCase();
+  const t = (typeName || '').toLowerCase();
+  const isProxyOrGeneric = t.includes('proxy') || t.includes('обобщенные') || t.includes('ifcelement');
+  const hasFrameKeyword =
+    n.includes('vg_карка') ||
+    n.includes('фитинг') ||
+    n.includes('стойка') ||
+    n.includes('профиль пола') ||
+    n.includes('профиль потолка');
+  return isProxyOrGeneric && hasFrameKeyword;
+}
+
+function getAssemblyElements(target: ModelElement): ModelElement[] {
+  if (!assemblyModeEnabled) {
+    return [target];
+  }
+  if (isFrameElement(target.name, target.typeName)) {
+    return allModelElements.filter((e) => isFrameElement(e.name, e.typeName));
+  }
+  return [target];
+}
+
+function clearSelection() {
+  for (const m of selectedMeshes) {
+    const orig = originalMaterials.get(m);
+    if (orig) m.material = orig as THREE.Material;
+  }
+  selectedMeshes = [];
+  selectedMesh = null;
+}
+
+function selectElementOrAssembly(elem: ModelElement) {
+  clearSelection();
+  const assembly = getAssemblyElements(elem);
+  const isAssembly = assembly.length > 1;
+
+  for (const item of assembly) {
+    if (item.mesh.visible) {
+      item.mesh.material = selectedMaterial;
+      selectedMeshes.push(item.mesh);
+    }
+  }
+  selectedMesh = selectedMeshes[0] || null;
+
+  if (isAssembly) {
+    const mainProxy = assembly.find((e) => e.name.toLowerCase().includes('карка')) || elem;
+    showAssemblyProperties(mainProxy, assembly);
+  } else {
+    showProperties(elem.expressID, elem.modelID);
+  }
+}
+
 function selectElementByID(expressID: number) {
   const elem = allModelElements.find((e) => e.expressID === expressID);
   if (!elem) return;
-
-  if (selectedMesh) {
-    const orig = originalMaterials.get(selectedMesh);
-    if (orig) selectedMesh.material = orig as THREE.Material;
-    selectedMesh = null;
-  }
-
-  if (elem.mesh.visible) {
-    selectedMesh = elem.mesh;
-    elem.mesh.material = selectedMaterial;
-    showProperties(elem.expressID, elem.modelID);
-  }
+  selectElementOrAssembly(elem);
 }
 
 function renderTreePanel() {
@@ -572,6 +624,20 @@ function renderTreePanel() {
     const eyeIcon = noneVisible ? '👁️‍🗨️' : '👁️';
     const isAutoExpanded = Boolean(searchQuery);
 
+    const frameInThisCat = matchingElements.filter((e) => isFrameElement(e.name, e.typeName));
+    let frameAssemblyHtml = '';
+    if (frameInThisCat.length > 1 && !searchQuery) {
+      const anyFrameVis = frameInThisCat.some((e) => e.mesh.visible);
+      frameAssemblyHtml = `
+        <div class="tree-item-row" data-frame-assembly="true" style="background: rgba(56,189,248,0.12); border-left: 3px solid #38bdf8; font-weight:600; color:#38bdf8; padding: 6px 8px; margin: 2px 0;" title="Выбрать весь каркас блок-контейнера">
+          <span>📦 Каркас блок-контейнера (${frameInThisCat.length} дет.)</span>
+          <button class="tree-eye-btn ${anyFrameVis ? '' : 'off'}" data-frame-eye="true" title="Скрыть/показать весь каркас">
+            ${anyFrameVis ? '👁️' : '👁️‍🗨️'}
+          </button>
+        </div>
+      `;
+    }
+
     html += `
       <div class="tree-cat-card">
         <div class="tree-cat-header" data-category="${typeName}">
@@ -582,6 +648,7 @@ function renderTreePanel() {
           <span class="tree-badge">${matchingElements.length}${searchQuery ? ` / ${elements.length}` : ''}</span>
         </div>
         <div class="tree-items-list ${isAutoExpanded ? '' : 'hidden'}" id="cat-list-${typeName}">
+          ${frameAssemblyHtml}
           ${matchingElements
             .map(
               (e) => `
@@ -645,7 +712,31 @@ function renderTreePanel() {
   treeContent.querySelectorAll('.tree-item-row').forEach((row) => {
     row.addEventListener('click', () => {
       const id = parseInt((row as HTMLElement).dataset.elemId || '-1');
-      selectElementByID(id);
+      if (id > 0) selectElementByID(id);
+    });
+  });
+
+  treeContent.querySelectorAll('[data-frame-assembly]').forEach((row) => {
+    row.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('[data-frame-eye]')) return;
+      const frameElems = allModelElements.filter((el) => isFrameElement(el.name, el.typeName));
+      if (frameElems.length > 0) {
+        selectElementOrAssembly(frameElems[0]);
+      }
+    });
+  });
+
+  treeContent.querySelectorAll('[data-frame-eye]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const frameElems = allModelElements.filter((el) => isFrameElement(el.name, el.typeName));
+      const anyVisible = frameElems.some((el) => el.mesh.visible);
+      for (const el of frameElems) {
+        setMeshVisibility(el.mesh, !anyVisible);
+      }
+      updateHiddenStatus();
+      if (sectionBoxEnabled) fitSectionBoxToVisible();
+      renderTreePanel();
     });
   });
 }
@@ -885,18 +976,27 @@ function onMouseMove(event: MouseEvent) {
   const intersects = rawIntersects.filter((hit) => isPointInsideSectionBox(hit.point));
 
   // Restore hover
-  if (hoveredMesh && hoveredMesh !== selectedMesh) {
-    const orig = originalMaterials.get(hoveredMesh);
-    if (orig) hoveredMesh.material = orig as THREE.Material;
+  for (const m of hoveredMeshes) {
+    if (!selectedMeshes.includes(m)) {
+      const orig = originalMaterials.get(m);
+      if (orig) m.material = orig as THREE.Material;
+    }
   }
+  hoveredMeshes = [];
   hoveredMesh = null;
 
   if (intersects.length > 0) {
     const hit = intersects[0].object as THREE.Mesh;
-    if (hit !== selectedMesh) {
-      hoveredMesh = hit;
-      hit.material = highlightMaterial;
+    const elem = allModelElements.find((e) => e.mesh === hit);
+    const targets = elem ? getAssemblyElements(elem).map((e) => e.mesh) : [hit];
+
+    for (const m of targets) {
+      if (!selectedMeshes.includes(m)) {
+        hoveredMeshes.push(m);
+        m.material = highlightMaterial;
+      }
     }
+    hoveredMesh = hit;
     canvas.style.cursor = 'pointer';
   } else {
     canvas.style.cursor = 'default';
@@ -913,19 +1013,14 @@ function onMouseClick(event: MouseEvent) {
   const rawIntersects = raycaster.intersectObjects(modelGroup.children, false);
   const intersects = rawIntersects.filter((hit) => isPointInsideSectionBox(hit.point));
 
-  // Deselect previous
-  if (selectedMesh) {
-    const orig = originalMaterials.get(selectedMesh);
-    if (orig) selectedMesh.material = orig as THREE.Material;
-    selectedMesh = null;
-  }
-
   if (intersects.length > 0) {
     const hit = intersects[0].object as THREE.Mesh;
-    selectedMesh = hit;
-    hit.material = selectedMaterial;
-    showProperties(hit.userData.expressID, hit.userData.modelID);
+    const elem = allModelElements.find((e) => e.mesh === hit);
+    if (elem) {
+      selectElementOrAssembly(elem);
+    }
   } else {
+    clearSelection();
     propsPanel.classList.add('hidden');
   }
 }
@@ -1150,6 +1245,89 @@ function getElementPropertySets(modelID: number, expressID: number): PsetGroup[]
   } catch (e) {}
 
   return psetGroups;
+}
+
+function showAssemblyProperties(mainElem: ModelElement, assembly: ModelElement[]) {
+  if (!ifcAPI) return;
+
+  propsPanel.classList.remove('hidden');
+  propsContent.innerHTML = '';
+
+  const isFrame = isFrameElement(mainElem.name, mainElem.typeName);
+  const title = isFrame ? '📦 Каркас блок-контейнера' : '📦 Сборка элементов';
+  const subtitle = isFrame
+    ? 'Несущий стальной каркас модуля 6000×2400×2600 мм (стойки, фитинги, швеллеры обвязки пола и потолка)'
+    : mainElem.name;
+
+  let html = `
+    <div class="prop-group" style="background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.4); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-weight:700; color:#38bdf8; font-size:14px;">${title}</span>
+        <span style="background:#0284c7; color:#fff; border-radius:12px; padding:2px 8px; font-size:11px; font-weight:600;">${assembly.length} дет.</span>
+      </div>
+      <div style="font-size:11px; color:#bae6fd; margin-top:5px; line-height:1.4;">
+        ${subtitle}
+      </div>
+    </div>
+  `;
+
+  // Add Psets from mainElem (or any element that has Psets)
+  let psets = getElementPropertySets(mainElem.modelID, mainElem.expressID);
+  if (psets.length === 0) {
+    for (const item of assembly) {
+      psets = getElementPropertySets(item.modelID, item.expressID);
+      if (psets.length > 0) break;
+    }
+  }
+
+  if (psets.length > 0) {
+    for (const pset of psets) {
+      const isArctic = pset.name.includes('Арктика');
+      const titleStyle = isArctic
+        ? 'color: #38bdf8; font-weight: 700; border-bottom: 1px solid rgba(56,189,248,0.3); padding-bottom: 3px; margin-bottom: 6px;'
+        : 'color: var(--accent); font-weight: 600; margin-bottom: 4px;';
+      const icon = isArctic ? '❄️ ' : '📁 ';
+      const cardStyle = isArctic
+        ? 'background: rgba(56,189,248,0.08); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(56,189,248,0.25); margin-bottom: 10px;'
+        : 'margin-bottom: 12px;';
+
+      html += `<div class="prop-group" style="${cardStyle}">
+        <div class="prop-group-title" style="${titleStyle}">${icon}${pset.name}</div>`;
+      for (const prop of pset.properties) {
+        html += `<div class="prop-row">
+          <span class="prop-key" style="color: ${isArctic ? '#bae6fd' : 'var(--text-muted)'};">${prop.name}</span>
+          <span class="prop-value" style="${isArctic ? 'color: #f8fafc; font-weight: 600;' : ''}">${prop.value}</span>
+        </div>`;
+      }
+      html += '</div>';
+    }
+  }
+
+  // Breakdown of assembly parts
+  const partCounts = new Map<string, number>();
+  for (const item of assembly) {
+    const clean = item.name.replace(/^[^:]+:\s*/, '');
+    partCounts.set(clean, (partCounts.get(clean) || 0) + 1);
+  }
+
+  html += `
+    <div class="prop-group" style="margin-top: 10px;">
+      <div class="prop-group-title" style="color: var(--accent); font-weight: 600; margin-bottom: 6px;">
+        🔩 Состав сборки (${assembly.length} шт.):
+      </div>
+  `;
+
+  for (const [partName, count] of partCounts) {
+    html += `
+      <div class="prop-row" style="font-size:11px; padding:3px 0;">
+        <span class="prop-key" style="color:var(--text);">${partName}</span>
+        <span class="prop-value" style="font-weight:600; color:#38bdf8;">${count} шт.</span>
+      </div>
+    `;
+  }
+  html += '</div>';
+
+  propsContent.innerHTML = html;
 }
 
 function showProperties(expressID: number, modelID: number) {
@@ -1401,6 +1579,27 @@ hideHelpersBtn.addEventListener('click', hideAuxiliarySurfaces);
 
 wireframeBtn.addEventListener('click', toggleWireframe);
 orthoBtn.addEventListener('click', toggleProjection);
+
+assemblyBtn?.addEventListener('click', () => {
+  assemblyModeEnabled = !assemblyModeEnabled;
+  if (assemblyModeEnabled) {
+    assemblyBtn.classList.add('active');
+    assemblyBtn.innerHTML = '📦 Сборка: Вкл';
+    assemblyBtn.title = 'Режим выбора: сборка целиком (каркас). Кликните для перехода к отдельным деталям.';
+    setStatus('📦 Включен режим выбора сборок (каркас выбирается целиком)');
+  } else {
+    assemblyBtn.classList.remove('active');
+    assemblyBtn.innerHTML = '🔹 Элемент: Вкл';
+    assemblyBtn.title = 'Режим выбора: отдельные детали. Кликните для выбора сборок целиком.';
+    setStatus('🔹 Включен режим выбора отдельных элементов');
+  }
+  if (selectedMeshes.length > 0) {
+    const first = selectedMeshes[0];
+    const elem = allModelElements.find((e) => e.mesh === first);
+    if (elem) selectElementOrAssembly(elem);
+  }
+});
+
 propsClose.addEventListener('click', () => propsPanel.classList.add('hidden'));
 
 hideElemBtn.addEventListener('click', () => {
@@ -1430,7 +1629,7 @@ async function loadSampleModel() {
     const response = await fetch(sampleUrl);
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     const buffer = await response.arrayBuffer();
-    await loadIFC(buffer, 'Building-Architecture.ifc');
+    await loadIFC(buffer, 'Модуль_Арктика.ifc');
   } catch (err) {
     console.error('Failed to load sample IFC:', err);
     setStatus(`❌ Ошибка загрузки примера: ${(err as Error).message}`);
