@@ -1459,14 +1459,19 @@ function showAssemblyProperties(mainElem: ModelElement, assembly: ModelElement[]
   propsContent.innerHTML = '';
 
   const isFrame = isFrameElement(mainElem.name, mainElem.typeName);
-  const isSocket = isSocketElement(mainElem.name);
+  const isSwitch = mainElem.name.toLowerCase().includes('выключател');
+  const isSocket = isSocketElement(mainElem.name) && !isSwitch;
   const title = isFrame
     ? '📦 Каркас блок-контейнера'
+    : isSwitch
+    ? '💡 Выключатель освещения'
     : isSocket
     ? '🔌 Блок розеток'
     : '📦 Сборка элементов';
   const subtitle = isFrame
     ? 'Несущий стальной каркас модуля 6000×2400×2600 мм (стойки, фитинги, швеллеры обвязки пола и потолка)'
+    : isSwitch
+    ? 'Комплектный выключатель 220В (рамка + механизм выключателя 1КЛ)'
     : isSocket
     ? 'Комплектная розетка (рамка + механизм розетки 220V)'
     : mainElem.name;
@@ -1493,19 +1498,27 @@ function showAssemblyProperties(mainElem: ModelElement, assembly: ModelElement[]
   }
 
   // If socket assembly has no Pset exported from Revit, supply Arctic specs
-  if (psets.length === 0 && isSocket) {
+  if (psets.length === 0 && (isSocket || isSwitch)) {
     psets = [
       {
-        name: 'Pset_Арктика_Розетка',
-        properties: [
-          { name: 'Наименование', value: 'Розетка с заземлением IP54' },
-          { name: 'Материал в реальности', value: 'Негорючий термопласт / степень защиты IP54' },
-          { name: 'Материал в макете', value: 'Картон / 3D-печать' },
-          { name: 'Рабочее напряжение', value: '220 В' },
-          { name: 'Защитная крышка от брызг и пыли', value: 'IP54 (пыле- и влагозащита)' },
-          { name: 'Заземление', value: 'Да (Schuko)' },
-          { name: 'Защитные шторки', value: 'Да' },
-        ],
+        name: isSwitch ? 'Pset_Арктика_Выключатель' : 'Pset_Арктика_Розетка',
+        properties: isSwitch
+          ? [
+              { name: 'Наименование', value: 'Выключатель одноклавишный 220В (IP44)' },
+              { name: 'Материал в реальности', value: 'Негорючий термопласт / степень защиты IP44' },
+              { name: 'Материал в макете', value: 'Картон / 3D-печать' },
+              { name: 'Рабочее напряжение', value: '220 В' },
+              { name: 'Защитная крышка от брызг и пыли', value: 'Да (IP44)' },
+            ]
+          : [
+              { name: 'Наименование', value: 'Розетка с заземлением IP44' },
+              { name: 'Материал в реальности', value: 'Негорючий термопласт / степень защиты IP44' },
+              { name: 'Материал в макете', value: 'Картон / 3D-печать' },
+              { name: 'Рабочее напряжение', value: '220 В' },
+              { name: 'Защитная крышка от брызг и пыли', value: 'Да (IP44)' },
+              { name: 'Заземление', value: 'Да (Schuko)' },
+              { name: 'Защитные шторки', value: 'Да' },
+            ],
       },
     ];
   }
@@ -1523,6 +1536,17 @@ function showAssemblyProperties(mainElem: ModelElement, assembly: ModelElement[]
       }
     } else {
       otherPsets.push(pset);
+    }
+  }
+
+  // Ensure 'Наименование' is ALWAYS present and user-friendly for sockets, switches and assemblies:
+  if (!arcticPropsMap.has('Наименование') && !arcticPropsMap.has('ADSK_Наименование')) {
+    if (isSwitch) {
+      arcticPropsMap.set('Наименование', 'Выключатель одноклавишный 220В (IP44)');
+    } else if (isSocket) {
+      arcticPropsMap.set('Наименование', 'Розетка с заземлением 220В (IP44)');
+    } else if (isFrame) {
+      arcticPropsMap.set('Наименование', 'Каркас металлический модульный');
     }
   }
 
@@ -1597,6 +1621,23 @@ function showProperties(expressID: number, modelID: number) {
         }
       } else {
         otherPsets.push(pset);
+      }
+    }
+
+    // Ensure 'Наименование' is ALWAYS present in Arctic properties if missing
+    if (arcticPropsMap.size > 0 && !arcticPropsMap.has('Наименование') && !arcticPropsMap.has('ADSK_Наименование')) {
+      const rawName = (props.Name && props.Name.value ? String(props.Name.value) : '').toLowerCase();
+      if (rawName.includes('выключател')) {
+        arcticPropsMap.set('Наименование', 'Выключатель одноклавишный 220В (IP44)');
+      } else if (rawName.includes('розетк')) {
+        arcticPropsMap.set('Наименование', 'Розетка с заземлением 220В (IP44)');
+      } else if (rawName.includes('карка') || rawName.includes('фитинг') || rawName.includes('стойк')) {
+        arcticPropsMap.set('Наименование', 'Каркас металлический');
+      } else if (props.Name && props.Name.value) {
+        const cleanName = String(props.Name.value).replace(/^[^:]+:\s*/, '').replace(/:\s*[^:]+$/, '').trim();
+        if (cleanName) {
+          arcticPropsMap.set('Наименование', cleanName);
+        }
       }
     }
 
