@@ -558,13 +558,14 @@ let facadeMode: 0 | 1 | 2 = 0; // 0 = 100%, 1 = 22% (X-ray), 2 = hidden
 
 function isFacadeElement(name: string, typeName: string): boolean {
   const n = (name || '').toLowerCase();
-  // Only exterior envelope elements (sandwich panels, roof cover, trim).
-  // Interior finish walls ('Стена_Отделка внутренняя') remain distinct interior elements!
+  // Exterior envelope and interior shell lining (sandwich panels, roof cover, trim, finish walls, ceiling lining)
   return (
     n.includes('сэндвич') ||
     n.includes('кровл') ||
     n.includes('наличник') ||
-    n.includes('фасад')
+    n.includes('фасад') ||
+    n.includes('отделк') ||
+    n.includes('обшивк')
   );
 }
 
@@ -934,6 +935,11 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
           geomData.GetIndexDataSize()
         );
 
+        if (verts.length === 0 || indices.length === 0) {
+          geomData.delete();
+          continue;
+        }
+
         const geometry = new THREE.BufferGeometry();
 
         // web-ifc vertices: [x,y,z, nx,ny,nz] per vertex
@@ -1091,7 +1097,9 @@ function onMouseMove(event: MouseEvent) {
   if (!modelGroup) return;
 
   const rawIntersects = raycaster.intersectObjects(modelGroup.children, false);
-  const intersects = rawIntersects.filter((hit) => isPointInsideSectionBox(hit.point));
+  const intersects = rawIntersects.filter(
+    (hit) => hit.object.visible && isPointInsideSectionBox(hit.point)
+  );
 
   // Restore hover
   for (const m of hoveredMeshes) {
@@ -1138,7 +1146,9 @@ function onMouseClick(event: MouseEvent) {
   if (!modelGroup) return;
 
   const rawIntersects = raycaster.intersectObjects(modelGroup.children, false);
-  const intersects = rawIntersects.filter((hit) => isPointInsideSectionBox(hit.point));
+  const intersects = rawIntersects.filter(
+    (hit) => hit.object.visible && isPointInsideSectionBox(hit.point)
+  );
 
   if (intersects.length > 0) {
     let targetHit = intersects[0];
