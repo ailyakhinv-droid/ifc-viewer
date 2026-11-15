@@ -13,6 +13,7 @@ const sectionBtn = document.getElementById('section-btn') as HTMLButtonElement;
 const treeBtn = document.getElementById('tree-btn') as HTMLButtonElement;
 const unhideAllBtn = document.getElementById('unhide-all-btn') as HTMLButtonElement;
 const hiddenCountSpan = document.getElementById('hidden-count') as HTMLSpanElement;
+const facadeBtn = document.getElementById('facade-btn') as HTMLButtonElement | null;
 const assemblyBtn = document.getElementById('assembly-btn') as HTMLButtonElement | null;
 const wireframeBtn = document.getElementById('wireframe-btn') as HTMLButtonElement;
 const orthoBtn = document.getElementById('ortho-btn') as HTMLButtonElement;
@@ -430,6 +431,8 @@ function showAllElements() {
   for (const elem of allModelElements) {
     elem.mesh.visible = true;
   }
+  facadeMode = 0;
+  applyFacadeMode();
   hiddenMeshSet.clear();
   updateHiddenStatus();
   setStatus('👁️ Все элементы снова отображаются');
@@ -551,6 +554,76 @@ function isFrameElement(name: string, typeName: string): boolean {
   return isProxyOrGeneric && hasFrameKeyword;
 }
 
+let facadeMode: 0 | 1 | 2 = 0; // 0 = 100%, 1 = 22% (X-ray), 2 = hidden
+
+function isFacadeElement(name: string, typeName: string): boolean {
+  const n = (name || '').toLowerCase();
+  const t = (typeName || '').toLowerCase();
+  return (
+    t.includes('wall') ||
+    t.includes('стена') ||
+    t.includes('стены') ||
+    n.includes('сэндвич') ||
+    n.includes('стена') ||
+    n.includes('кровл') ||
+    n.includes('обшивка потолка')
+  );
+}
+
+function applyFacadeMode() {
+  if (!facadeBtn) return;
+
+  for (const elem of allModelElements) {
+    if (!isFacadeElement(elem.name, elem.typeName)) continue;
+    const mesh = elem.mesh;
+    const orig = mesh.userData.origMaterialProps || { opacity: 1.0, transparent: false, depthWrite: true };
+
+    if (facadeMode === 0) {
+      mesh.visible = true;
+      if (mesh.material instanceof THREE.MeshStandardMaterial) {
+        mesh.material.opacity = orig.opacity;
+        mesh.material.transparent = orig.transparent;
+        mesh.material.depthWrite = orig.depthWrite;
+        mesh.material.needsUpdate = true;
+      }
+    } else if (facadeMode === 1) {
+      mesh.visible = true;
+      if (mesh.material instanceof THREE.MeshStandardMaterial) {
+        mesh.material.opacity = 0.22;
+        mesh.material.transparent = true;
+        mesh.material.depthWrite = false;
+        mesh.material.needsUpdate = true;
+      }
+    } else if (facadeMode === 2) {
+      mesh.visible = false;
+    }
+  }
+
+  if (facadeMode === 0) {
+    facadeBtn.innerHTML = '🏢 Фасад: 100%';
+    facadeBtn.classList.remove('active');
+    facadeBtn.title = 'Режим фасада: 100% непрозрачный. Нажмите для рентгена (22%).';
+    setStatus('🏢 Фасад: непрозрачный (100%)');
+  } else if (facadeMode === 1) {
+    facadeBtn.innerHTML = '👻 Фасад: Рентген';
+    facadeBtn.classList.add('active');
+    facadeBtn.title = 'Режим фасада: Полупрозрачный рентген (22%). Виден каркас и всё оборудование внутри!';
+    setStatus('👻 Фасад: полупрозрачный рентген (22%). Виден каркас и оборудование внутри');
+  } else {
+    facadeBtn.innerHTML = '🙈 Фасад: Скрыт';
+    facadeBtn.classList.add('active');
+    facadeBtn.title = 'Режим фасада: Стены и кровля скрыты. Открыт полный стальной каркас и инженерные сети!';
+    setStatus('🙈 Фасад: стены и кровля скрыты. Открыт стальной каркас и внутреннее оборудование');
+  }
+
+  updateHiddenStatus();
+}
+
+function toggleFacadeMode() {
+  facadeMode = ((facadeMode + 1) % 3) as 0 | 1 | 2;
+  applyFacadeMode();
+}
+
 function getAssemblyElements(target: ModelElement): ModelElement[] {
   if (assemblyModeEnabled && isFrameElement(target.name, target.typeName)) {
     return allModelElements.filter((e) => isFrameElement(e.name, e.typeName));
@@ -562,7 +635,17 @@ function getAssemblyElements(target: ModelElement): ModelElement[] {
 function clearSelection() {
   for (const m of selectedMeshes) {
     const orig = originalMaterials.get(m);
-    if (orig) m.material = orig as THREE.Material;
+    if (orig) {
+      m.material = orig as THREE.Material;
+      if (facadeMode === 1 && isFacadeElement(m.userData.name, m.userData.typeName)) {
+        if (m.material instanceof THREE.MeshStandardMaterial) {
+          m.material.opacity = 0.22;
+          m.material.transparent = true;
+          m.material.depthWrite = false;
+          m.material.needsUpdate = true;
+        }
+      }
+    }
   }
   selectedMeshes = [];
   selectedMesh = null;
@@ -922,6 +1005,11 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
         mesh.userData.modelID = modelID;
         mesh.userData.typeName = typeName;
         mesh.userData.name = elemName;
+        mesh.userData.origMaterialProps = {
+          opacity: material.opacity,
+          transparent: material.transparent,
+          depthWrite: material.depthWrite,
+        };
 
         allModelElements.push({
           mesh,
@@ -940,6 +1028,7 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
     }
 
     scene.add(modelGroup);
+    applyFacadeMode();
     updateHiddenStatus();
     fitCameraToModel();
 
@@ -1610,6 +1699,8 @@ hideHelpersBtn.addEventListener('click', hideAuxiliarySurfaces);
 
 wireframeBtn.addEventListener('click', toggleWireframe);
 orthoBtn.addEventListener('click', toggleProjection);
+
+facadeBtn?.addEventListener('click', toggleFacadeMode);
 
 assemblyBtn?.addEventListener('click', () => {
   assemblyModeEnabled = !assemblyModeEnabled;
