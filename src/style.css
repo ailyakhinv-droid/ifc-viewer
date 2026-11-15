@@ -485,6 +485,28 @@ body {
   display: none;
 }
 
+.tree-search-bar {
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: 1px solid var(--border);
+}
+
+.tree-search-bar input {
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.tree-search-bar input:focus {
+  border-color: var(--accent);
+}
+
 .tree-toolbar {
   display: flex;
   gap: 8px;

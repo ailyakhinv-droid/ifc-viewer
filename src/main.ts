@@ -49,6 +49,7 @@ const zVal = document.getElementById('z-val') as HTMLSpanElement;
 const treePanel = document.getElementById('tree-panel') as HTMLDivElement;
 const treeClose = document.getElementById('tree-close') as HTMLButtonElement;
 const treeContent = document.getElementById('tree-content') as HTMLDivElement;
+const treeSearchInput = document.getElementById('tree-search-input') as HTMLInputElement | null;
 const hideHelpersBtn = document.getElementById('hide-helpers-btn') as HTMLButtonElement;
 const treeShowAllBtn = document.getElementById('tree-show-all-btn') as HTMLButtonElement;
 
@@ -481,9 +482,25 @@ function hideAuxiliarySurfaces() {
       nameLower.includes('origin') ||
       nameLower.includes('gross volume') ||
       nameLower.includes('sand bedding') ||
+      nameLower.includes('поверхн') ||
+      nameLower.includes('площад') ||
+      nameLower.includes('рельеф') ||
+      nameLower.includes('земл') ||
+      nameLower.includes('участ') ||
+      nameLower.includes('генплан') ||
+      nameLower.includes('топограф') ||
+      nameLower.includes('terrain') ||
+      nameLower.includes('surface') ||
+      nameLower.includes('topograph') ||
+      nameLower.includes('environment') ||
+      nameLower.includes('ground') ||
+      nameLower.includes('site') ||
       typeLower.includes('site') ||
       typeLower.includes('geographic') ||
-      (typeLower.includes('proxy') && (nameLower.includes('площад') || nameLower.includes('поверхн')))
+      typeLower.includes('surface') ||
+      typeLower.includes('terrain') ||
+      typeLower.includes('civil') ||
+      typeLower.includes('earth')
     ) {
       setMeshVisibility(elem.mesh, false);
       count++;
@@ -502,11 +519,30 @@ function hideAuxiliarySurfaces() {
     fitSectionBoxToVisible();
   }
   fitCameraToModel();
-  setStatus(`🚫 Скрыты вспомогательные поверхности (${count} эл.). Куб подрезки подогнан под здание.`);
+  setStatus(`🚫 Скрыты вспомогательные поверхности (${count} эл.). Куб подрезки подогнан.`);
+}
+
+function selectElementByID(expressID: number) {
+  const elem = allModelElements.find((e) => e.expressID === expressID);
+  if (!elem) return;
+
+  if (selectedMesh) {
+    const orig = originalMaterials.get(selectedMesh);
+    if (orig) selectedMesh.material = orig as THREE.Material;
+    selectedMesh = null;
+  }
+
+  if (elem.mesh.visible) {
+    selectedMesh = elem.mesh;
+    elem.mesh.material = selectedMaterial;
+    showProperties(elem.expressID, elem.modelID);
+  }
 }
 
 function renderTreePanel() {
   if (!treePanel || treePanel.classList.contains('hidden')) return;
+
+  const searchQuery = (treeSearchInput?.value || '').trim().toLowerCase();
 
   const categories = new Map<string, ModelElement[]>();
   for (const elem of allModelElements) {
@@ -517,9 +553,24 @@ function renderTreePanel() {
 
   let html = '';
   for (const [typeName, elements] of categories) {
+    // If search active, filter elements
+    const matchingElements = searchQuery
+      ? elements.filter(
+          (e) =>
+            e.name.toLowerCase().includes(searchQuery) ||
+            e.typeName.toLowerCase().includes(searchQuery) ||
+            String(e.expressID).includes(searchQuery)
+        )
+      : elements;
+
+    if (searchQuery && matchingElements.length === 0) {
+      continue; // Skip categories that don't match search
+    }
+
     const noneVisible = elements.every((e) => !e.mesh.visible);
     const eyeClass = noneVisible ? 'off' : '';
     const eyeIcon = noneVisible ? '👁️‍🗨️' : '👁️';
+    const isAutoExpanded = Boolean(searchQuery);
 
     html += `
       <div class="tree-cat-card">
@@ -528,15 +579,15 @@ function renderTreePanel() {
             <button class="tree-eye-btn ${eyeClass}" data-cat-eye="${typeName}" title="Скрыть/показать категорию">${eyeIcon}</button>
             <span>${typeName}</span>
           </div>
-          <span class="tree-badge">${elements.length}</span>
+          <span class="tree-badge">${matchingElements.length}${searchQuery ? ` / ${elements.length}` : ''}</span>
         </div>
-        <div class="tree-items-list hidden" id="cat-list-${typeName}">
-          ${elements
+        <div class="tree-items-list ${isAutoExpanded ? '' : 'hidden'}" id="cat-list-${typeName}">
+          ${matchingElements
             .map(
               (e) => `
-            <div class="tree-item-row ${e.mesh.visible ? '' : 'hidden-item'}" data-elem-id="${e.expressID}">
+            <div class="tree-item-row ${e.mesh.visible ? '' : 'hidden-item'}" data-elem-id="${e.expressID}" title="Кликните для выбора в 3D">
               <span>${e.name || `#${e.expressID}`}</span>
-              <button class="tree-eye-btn ${e.mesh.visible ? '' : 'off'}" data-item-eye="${e.expressID}">
+              <button class="tree-eye-btn ${e.mesh.visible ? '' : 'off'}" data-item-eye="${e.expressID}" title="Скрыть/показать этот элемент">
                 ${e.mesh.visible ? '👁️' : '👁️‍🗨️'}
               </button>
             </div>
@@ -546,6 +597,10 @@ function renderTreePanel() {
         </div>
       </div>
     `;
+  }
+
+  if (searchQuery && html === '') {
+    html = `<div style="padding:16px; text-align:center; color:var(--text-muted); font-size:12px;">По запросу «${searchQuery}» ничего не найдено</div>`;
   }
 
   treeContent.innerHTML = html;
@@ -584,6 +639,13 @@ function renderTreePanel() {
       }
       updateHiddenStatus();
       if (sectionBoxEnabled) fitSectionBoxToVisible();
+    });
+  });
+
+  treeContent.querySelectorAll('.tree-item-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      const id = parseInt((row as HTMLElement).dataset.elemId || '-1');
+      selectElementByID(id);
     });
   });
 }
@@ -1042,6 +1104,15 @@ function formatPropValue(val: any): string | null {
 }
 
 function getIfcTypeName(typeCode: number): string {
+  try {
+    if (ifcAPI) {
+      const resolved = ifcAPI.GetNameFromTypeCode(typeCode);
+      if (resolved) return resolved;
+    }
+  } catch (e) {
+    // Fallback to static table
+  }
+
   // Common IFC types
   const typeNames: Record<number, string> = {
     [WebIFC.IFCWALL]: 'IfcWall',
@@ -1173,6 +1244,9 @@ treeBtn.addEventListener('click', () => {
   renderTreePanel();
 });
 treeClose.addEventListener('click', () => treePanel.classList.add('hidden'));
+treeSearchInput?.addEventListener('input', () => {
+  renderTreePanel();
+});
 unhideAllBtn.addEventListener('click', showAllElements);
 treeShowAllBtn.addEventListener('click', showAllElements);
 hideHelpersBtn.addEventListener('click', hideAuxiliarySurfaces);
