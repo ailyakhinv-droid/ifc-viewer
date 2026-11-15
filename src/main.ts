@@ -1029,6 +1029,129 @@ function onPointerUp() {
 }
 
 // ─── Properties Display ───────────────────────────────────
+interface PsetProperty {
+  name: string;
+  value: string;
+}
+
+interface PsetGroup {
+  name: string;
+  properties: PsetProperty[];
+}
+
+function getElementPropertySets(modelID: number, expressID: number): PsetGroup[] {
+  if (!ifcAPI) return [];
+  const psetGroups: PsetGroup[] = [];
+  const visitedPsetIds = new Set<number>();
+
+  const parsePset = (psetId: number) => {
+    if (visitedPsetIds.has(psetId)) return;
+    visitedPsetIds.add(psetId);
+    try {
+      const pset = ifcAPI!.GetLine(modelID, psetId);
+      if (!pset) return;
+      const psetName = pset.Name && pset.Name.value ? pset.Name.value : `Pset #${psetId}`;
+      const properties: PsetProperty[] = [];
+
+      if (pset.HasProperties && Array.isArray(pset.HasProperties)) {
+        for (const propRef of pset.HasProperties) {
+          if (!propRef || propRef.value === undefined) continue;
+          const prop = ifcAPI!.GetLine(modelID, propRef.value);
+          if (!prop) continue;
+          const name = prop.Name && prop.Name.value ? prop.Name.value : 'Параметр';
+          let val = '';
+          if (prop.NominalValue !== undefined && prop.NominalValue !== null) {
+            val = prop.NominalValue.value !== undefined ? String(prop.NominalValue.value) : String(prop.NominalValue);
+          } else if (prop.Description && prop.Description.value) {
+            val = String(prop.Description.value);
+          }
+          if (name && val !== '') {
+            properties.push({ name, value: val });
+          }
+        }
+      }
+
+      if (pset.Quantities && Array.isArray(pset.Quantities)) {
+        for (const qRef of pset.Quantities) {
+          if (!qRef || qRef.value === undefined) continue;
+          const q = ifcAPI!.GetLine(modelID, qRef.value);
+          if (!q) continue;
+          const name = q.Name && q.Name.value ? q.Name.value : 'Величина';
+          let val = '';
+          for (const k of ['LengthValue', 'AreaValue', 'VolumeValue', 'CountValue', 'WeightValue']) {
+            if (q[k] !== undefined && q[k] !== null) {
+              const num = q[k].value !== undefined ? q[k].value : q[k];
+              val = typeof num === 'number' ? num.toFixed(2) : String(num);
+              break;
+            }
+          }
+          if (name && val !== '') {
+            properties.push({ name, value: val });
+          }
+        }
+      }
+
+      if (properties.length > 0) {
+        psetGroups.push({ name: psetName, properties });
+      }
+    } catch (e) {
+      console.warn('Error reading Pset:', e);
+    }
+  };
+
+  // 1. Прямые PSET экземпляра через IFCRELDEFINESBYPROPERTIES
+  try {
+    const relProps = ifcAPI.GetLineIDsWithType(modelID, WebIFC.IFCRELDEFINESBYPROPERTIES);
+    for (let i = 0; i < relProps.size(); i++) {
+      const rel = ifcAPI.GetLine(modelID, relProps.get(i));
+      if (!rel || !rel.RelatedObjects) continue;
+      for (const obj of rel.RelatedObjects) {
+        if (obj && obj.value === expressID && rel.RelatingPropertyDefinition) {
+          parsePset(rel.RelatingPropertyDefinition.value);
+        }
+      }
+    }
+  } catch (e) {}
+
+  // 2. PSET типа через IFCRELDEFINESBYTYPE
+  try {
+    const relTypes = ifcAPI.GetLineIDsWithType(modelID, WebIFC.IFCRELDEFINESBYTYPE);
+    for (let i = 0; i < relTypes.size(); i++) {
+      const rel = ifcAPI.GetLine(modelID, relTypes.get(i));
+      if (!rel || !rel.RelatedObjects) continue;
+      let matches = false;
+      for (const obj of rel.RelatedObjects) {
+        if (obj && obj.value === expressID) { matches = true; break; }
+      }
+      if (matches && rel.RelatingType) {
+        const typeId = rel.RelatingType.value;
+        const typeObj = ifcAPI.GetLine(modelID, typeId);
+        // A. Через HasPropertySets у объекта типа
+        if (typeObj && typeObj.HasPropertySets && Array.isArray(typeObj.HasPropertySets)) {
+          for (const pRef of typeObj.HasPropertySets) {
+            if (pRef && pRef.value !== undefined) parsePset(pRef.value);
+          }
+        }
+        // B. Через IFCRELDEFINESBYPROPERTIES у объекта типа
+        try {
+          const relProps = ifcAPI.GetLineIDsWithType(modelID, WebIFC.IFCRELDEFINESBYPROPERTIES);
+          for (let j = 0; j < relProps.size(); j++) {
+            const r = ifcAPI.GetLine(modelID, relProps.get(j));
+            if (!r || !r.RelatedObjects) continue;
+            for (const obj of r.RelatedObjects) {
+              if (obj && obj.value === typeId && r.RelatingPropertyDefinition) {
+                parsePset(r.RelatingPropertyDefinition.value);
+              }
+            }
+          }
+        } catch (e) {}
+      }
+    }
+  } catch (e) {}
+
+  return psetGroups;
+}
+
 function showProperties(expressID: number, modelID: number) {
   if (!ifcAPI) return;
 
@@ -1062,8 +1185,33 @@ function showProperties(expressID: number, modelID: number) {
 
     html += '</div>';
 
-    // Show all other properties
-    const skip = new Set(['type', 'expressID', 'Name', 'Description', 'GlobalId']);
+    // PSETS (Custom Arctic Psets and Common Psets)
+    const psets = getElementPropertySets(modelID, expressID);
+    if (psets.length > 0) {
+      for (const pset of psets) {
+        const isArctic = pset.name.includes('Арктика');
+        const titleStyle = isArctic
+          ? 'color: #38bdf8; font-weight: 700; border-bottom: 1px solid rgba(56,189,248,0.3); padding-bottom: 3px; margin-bottom: 6px;'
+          : 'color: var(--accent); font-weight: 600; margin-bottom: 4px;';
+        const icon = isArctic ? '❄️ ' : '📁 ';
+        const cardStyle = isArctic
+          ? 'background: rgba(56,189,248,0.08); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(56,189,248,0.25); margin-bottom: 10px;'
+          : 'margin-bottom: 12px;';
+
+        html += `<div class="prop-group" style="${cardStyle}">
+          <div class="prop-group-title" style="${titleStyle}">${icon}${pset.name}</div>`;
+        for (const prop of pset.properties) {
+          html += `<div class="prop-row">
+            <span class="prop-key" style="color: ${isArctic ? '#bae6fd' : 'var(--text-muted)'};">${prop.name}</span>
+            <span class="prop-value" style="${isArctic ? 'color: #f8fafc; font-weight: 600;' : ''}">${prop.value}</span>
+          </div>`;
+        }
+        html += '</div>';
+      }
+    }
+
+    // Show all other raw properties (excluding pointers)
+    const skip = new Set(['type', 'expressID', 'Name', 'Description', 'GlobalId', 'Representation', 'ObjectPlacement', 'OwnerHistory', 'Tag']);
     const otherProps = Object.entries(props).filter(([key]) => !skip.has(key));
 
     if (otherProps.length > 0) {
