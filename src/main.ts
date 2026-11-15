@@ -1413,6 +1413,45 @@ function getElementPropertySets(modelID: number, expressID: number): PsetGroup[]
   return psetGroups;
 }
 
+function renderArcticPropertiesCard(props: { name: string; value: string }[]): string {
+  if (props.length === 0) return '';
+
+  const dimNames = new Set(['Длина', 'Ширина', 'Высота', 'Толщина', 'Диаметр', 'Глубина', 'Площадь']);
+  const nameProps = props.filter((p) => p.name === 'Наименование' || p.name === 'ADSK_Наименование');
+  const mainProps = props.filter((p) => p.name !== 'Наименование' && p.name !== 'ADSK_Наименование' && !dimNames.has(p.name));
+  const dimProps = props.filter((p) => dimNames.has(p.name));
+
+  const sortedProps = [...nameProps, ...mainProps, ...dimProps];
+
+  let html = `
+    <div class="prop-group" style="background: rgba(56, 189, 248, 0.08); padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(56, 189, 248, 0.3); margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.2);">
+      <div class="prop-group-title" style="color: #38bdf8; font-weight: 700; font-size: 13px; border-bottom: 1px solid rgba(56, 189, 248, 0.3); padding-bottom: 5px; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;">
+        <span>❄️</span>
+        <span>Свойства &laquo;Арктика&raquo;</span>
+      </div>
+  `;
+
+  for (const prop of sortedProps) {
+    const isName = prop.name === 'Наименование' || prop.name === 'ADSK_Наименование';
+    const displayName = isName ? 'Наименование' : prop.name;
+    const isDim = dimNames.has(prop.name);
+    const keyColor = isName ? '#7dd3fc' : isDim ? '#a5f3fc' : '#bae6fd';
+    const valColor = isName ? '#ffffff' : '#f8fafc';
+    const valWeight = isName ? '700' : '600';
+    const rowBg = isName ? 'background: rgba(56, 189, 248, 0.15); border-radius: 4px; padding: 4px 6px; margin-bottom: 5px;' : '';
+
+    html += `
+      <div class="prop-row" style="${rowBg}">
+        <span class="prop-key" style="color: ${keyColor}; font-weight: ${isName ? '600' : 'normal'};">${displayName}</span>
+        <span class="prop-value" style="color: ${valColor}; font-weight: ${valWeight};">${prop.value}</span>
+      </div>
+    `;
+  }
+
+  html += '</div>';
+  return html;
+}
+
 function showAssemblyProperties(mainElem: ModelElement, assembly: ModelElement[]) {
   if (!ifcAPI) return;
 
@@ -1444,7 +1483,7 @@ function showAssemblyProperties(mainElem: ModelElement, assembly: ModelElement[]
     </div>
   `;
 
-  // Add Psets from mainElem (or any element that has Psets)
+  // Add Psets from mainElem (or any element in assembly that has Psets)
   let psets = getElementPropertySets(mainElem.modelID, mainElem.expressID);
   if (psets.length === 0) {
     for (const item of assembly) {
@@ -1459,6 +1498,7 @@ function showAssemblyProperties(mainElem: ModelElement, assembly: ModelElement[]
       {
         name: 'Pset_Арктика_Розетка',
         properties: [
+          { name: 'Наименование', value: 'Розетка с заземлением IP54' },
           { name: 'Материал в реальности', value: 'Негорючий термопласт / степень защиты IP54' },
           { name: 'Материал в макете', value: 'Картон / 3D-печать' },
           { name: 'Рабочее напряжение', value: '220 В' },
@@ -1470,23 +1510,37 @@ function showAssemblyProperties(mainElem: ModelElement, assembly: ModelElement[]
     ];
   }
 
-  if (psets.length > 0) {
-    for (const pset of psets) {
-      const isArctic = pset.name.includes('Арктика');
-      const titleStyle = isArctic
-        ? 'color: #38bdf8; font-weight: 700; border-bottom: 1px solid rgba(56,189,248,0.3); padding-bottom: 3px; margin-bottom: 6px;'
-        : 'color: var(--accent); font-weight: 600; margin-bottom: 4px;';
-      const icon = isArctic ? '❄️ ' : '📁 ';
-      const cardStyle = isArctic
-        ? 'background: rgba(56,189,248,0.08); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(56,189,248,0.25); margin-bottom: 10px;'
-        : 'margin-bottom: 12px;';
+  // Collect Arctic properties into unified block, keep other Psets separate
+  const arcticPropsMap = new Map<string, string>();
+  const otherPsets: PsetGroup[] = [];
 
-      html += `<div class="prop-group" style="${cardStyle}">
-        <div class="prop-group-title" style="${titleStyle}">${icon}${pset.name}</div>`;
+  for (const pset of psets) {
+    if (pset.name.includes('Арктика')) {
+      for (const prop of pset.properties) {
+        if (!arcticPropsMap.has(prop.name)) {
+          arcticPropsMap.set(prop.name, prop.value);
+        }
+      }
+    } else {
+      otherPsets.push(pset);
+    }
+  }
+
+  // Render unified Arctic properties first
+  if (arcticPropsMap.size > 0) {
+    const arcticList = Array.from(arcticPropsMap.entries()).map(([name, value]) => ({ name, value }));
+    html += renderArcticPropertiesCard(arcticList);
+  }
+
+  // Render other Psets (if any)
+  if (otherPsets.length > 0) {
+    for (const pset of otherPsets) {
+      html += `<div class="prop-group" style="margin-bottom: 12px;">
+        <div class="prop-group-title" style="color: var(--accent); font-weight: 600; margin-bottom: 4px;">📁 ${pset.name}</div>`;
       for (const prop of pset.properties) {
         html += `<div class="prop-row">
-          <span class="prop-key" style="color: ${isArctic ? '#bae6fd' : 'var(--text-muted)'};">${prop.name}</span>
-          <span class="prop-value" style="${isArctic ? 'color: #f8fafc; font-weight: 600;' : ''}">${prop.value}</span>
+          <span class="prop-key" style="color: var(--text-muted);">${prop.name}</span>
+          <span class="prop-value">${prop.value}</span>
         </div>`;
       }
       html += '</div>';
@@ -1529,8 +1583,33 @@ function showProperties(expressID: number, modelID: number) {
   try {
     const props = ifcAPI.GetLine(modelID, expressID);
 
-    // Basic info
-    let html = `<div class="prop-group">
+    // Get Psets first to extract and show Arctic properties at the VERY TOP
+    const psets = getElementPropertySets(modelID, expressID);
+    const arcticPropsMap = new Map<string, string>();
+    const otherPsets: PsetGroup[] = [];
+
+    for (const pset of psets) {
+      if (pset.name.includes('Арктика')) {
+        for (const prop of pset.properties) {
+          if (!arcticPropsMap.has(prop.name)) {
+            arcticPropsMap.set(prop.name, prop.value);
+          }
+        }
+      } else {
+        otherPsets.push(pset);
+      }
+    }
+
+    let html = '';
+
+    // 1. Unified Arctic properties block at the VERY TOP
+    if (arcticPropsMap.size > 0) {
+      const arcticList = Array.from(arcticPropsMap.entries()).map(([name, value]) => ({ name, value }));
+      html += renderArcticPropertiesCard(arcticList);
+    }
+
+    // 2. Basic info
+    html += `<div class="prop-group" style="margin-bottom: 12px;">
       <div class="prop-group-title">Основная информация</div>
       <div class="prop-row"><span class="prop-key">Express ID</span><span class="prop-value">${expressID}</span></div>`;
 
@@ -1553,32 +1632,22 @@ function showProperties(expressID: number, modelID: number) {
 
     html += '</div>';
 
-    // PSETS (Custom Arctic Psets and Common Psets)
-    const psets = getElementPropertySets(modelID, expressID);
-    if (psets.length > 0) {
-      for (const pset of psets) {
-        const isArctic = pset.name.includes('Арктика');
-        const titleStyle = isArctic
-          ? 'color: #38bdf8; font-weight: 700; border-bottom: 1px solid rgba(56,189,248,0.3); padding-bottom: 3px; margin-bottom: 6px;'
-          : 'color: var(--accent); font-weight: 600; margin-bottom: 4px;';
-        const icon = isArctic ? '❄️ ' : '📁 ';
-        const cardStyle = isArctic
-          ? 'background: rgba(56,189,248,0.08); padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(56,189,248,0.25); margin-bottom: 10px;'
-          : 'margin-bottom: 12px;';
-
-        html += `<div class="prop-group" style="${cardStyle}">
-          <div class="prop-group-title" style="${titleStyle}">${icon}${pset.name}</div>`;
+    // 3. Other IFC Psets (Common Psets, etc.)
+    if (otherPsets.length > 0) {
+      for (const pset of otherPsets) {
+        html += `<div class="prop-group" style="margin-bottom: 12px;">
+          <div class="prop-group-title" style="color: var(--accent); font-weight: 600; margin-bottom: 4px;">📁 ${pset.name}</div>`;
         for (const prop of pset.properties) {
           html += `<div class="prop-row">
-            <span class="prop-key" style="color: ${isArctic ? '#bae6fd' : 'var(--text-muted)'};">${prop.name}</span>
-            <span class="prop-value" style="${isArctic ? 'color: #f8fafc; font-weight: 600;' : ''}">${prop.value}</span>
+            <span class="prop-key" style="color: var(--text-muted);">${prop.name}</span>
+            <span class="prop-value">${prop.value}</span>
           </div>`;
         }
         html += '</div>';
       }
     }
 
-    // Show all other raw properties (excluding pointers)
+    // 4. Raw / Additional properties
     const skip = new Set(['type', 'expressID', 'Name', 'Description', 'GlobalId', 'Representation', 'ObjectPlacement', 'OwnerHistory', 'Tag']);
     const otherProps = Object.entries(props).filter(([key]) => !skip.has(key));
 
