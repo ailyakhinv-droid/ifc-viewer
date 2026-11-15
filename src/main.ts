@@ -570,10 +570,12 @@ function clearSelection() {
 
 function selectElementOrAssembly(elem: ModelElement) {
   clearSelection();
-  const assembly = getAssemblyElements(elem);
-  const isAssembly = assembly.length > 1;
+  const isFrame = assemblyModeEnabled && isFrameElement(elem.name, elem.typeName);
+  const targets = isFrame
+    ? allModelElements.filter((e) => isFrameElement(e.name, e.typeName))
+    : allModelElements.filter((e) => e.expressID === elem.expressID);
 
-  for (const item of assembly) {
+  for (const item of targets) {
     if (item.mesh.visible) {
       item.mesh.material = selectedMaterial;
       selectedMeshes.push(item.mesh);
@@ -581,9 +583,9 @@ function selectElementOrAssembly(elem: ModelElement) {
   }
   selectedMesh = selectedMeshes[0] || null;
 
-  if (isAssembly) {
-    const mainProxy = assembly.find((e) => e.name.toLowerCase().includes('карка')) || elem;
-    showAssemblyProperties(mainProxy, assembly);
+  if (isFrame) {
+    const mainProxy = targets.find((e) => e.name.toLowerCase().includes('карка')) || elem;
+    showAssemblyProperties(mainProxy, targets);
   } else {
     showProperties(elem.expressID, elem.modelID);
   }
@@ -873,8 +875,12 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
         // Color from IFC
         const color = placedGeom.color;
         const isInsulation = color.x > 0.9 && color.y > 0.75 && color.z > 0.5 && color.z < 0.65;
-        const isMetalSkin = color.x > 0.9 && color.y > 0.9 && color.z > 0.88;
-        const polyFactor = isInsulation ? 2.0 : (isMetalSkin ? -1.0 : 0.0);
+
+        // In BIM viewers (BIMVision), internal insulation cores are not rendered as solid blocks on exterior facades
+        if (isInsulation && elemName.toLowerCase().includes('сэндвич')) {
+          geomData.delete();
+          continue;
+        }
 
         const material = new THREE.MeshStandardMaterial({
           color: new THREE.Color(color.x, color.y, color.z),
@@ -885,12 +891,26 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
           metalness: 0.1,
           clippingPlanes: sectionBoxEnabled ? clippingPlanes : [],
           clipShadows: true,
-          polygonOffset: polyFactor !== 0.0,
-          polygonOffsetFactor: polyFactor,
-          polygonOffsetUnits: polyFactor,
         });
 
         const mesh = new THREE.Mesh(geometry, material);
+
+        // Add subtle architectural edge lines (like in BIMVision and Revit)
+        try {
+          const edgeGeom = new THREE.EdgesGeometry(geometry, 28);
+          if (edgeGeom.attributes.position && edgeGeom.attributes.position.count > 0) {
+            const edgeLine = new THREE.LineSegments(
+              edgeGeom,
+              new THREE.LineBasicMaterial({
+                color: 0x334155,
+                opacity: 0.4,
+                transparent: true,
+                clippingPlanes: sectionBoxEnabled ? clippingPlanes : [],
+              })
+            );
+            mesh.add(edgeLine);
+          }
+        } catch (e) {}
 
         // Apply transformation matrix
         const mat = new THREE.Matrix4();
