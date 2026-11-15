@@ -120,14 +120,20 @@ let assemblyModeEnabled = true;
 const highlightMaterial = new THREE.MeshStandardMaterial({
   color: 0xe94560,
   transparent: true,
-  opacity: 0.6,
+  opacity: 0.75,
   depthTest: true,
+  polygonOffset: true,
+  polygonOffsetFactor: -3.0,
+  polygonOffsetUnits: -3.0,
 });
 const selectedMaterial = new THREE.MeshStandardMaterial({
   color: 0xff6b81,
   transparent: true,
-  opacity: 0.7,
+  opacity: 0.85,
   depthTest: true,
+  polygonOffset: true,
+  polygonOffsetFactor: -3.0,
+  polygonOffsetUnits: -3.0,
 });
 
 // Store original materials
@@ -546,13 +552,11 @@ function isFrameElement(name: string, typeName: string): boolean {
 }
 
 function getAssemblyElements(target: ModelElement): ModelElement[] {
-  if (!assemblyModeEnabled) {
-    return [target];
-  }
-  if (isFrameElement(target.name, target.typeName)) {
+  if (assemblyModeEnabled && isFrameElement(target.name, target.typeName)) {
     return allModelElements.filter((e) => isFrameElement(e.name, e.typeName));
   }
-  return [target];
+  // For any individual element (e.g. wall, window, slab), select ALL sub-meshes sharing its expressID (all layers!)
+  return allModelElements.filter((e) => e.expressID === target.expressID);
 }
 
 function clearSelection() {
@@ -868,6 +872,10 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
 
         // Color from IFC
         const color = placedGeom.color;
+        const isInsulation = color.x > 0.9 && color.y > 0.75 && color.z > 0.5 && color.z < 0.65;
+        const isMetalSkin = color.x > 0.9 && color.y > 0.9 && color.z > 0.88;
+        const polyFactor = isInsulation ? 2.0 : (isMetalSkin ? -1.0 : 0.0);
+
         const material = new THREE.MeshStandardMaterial({
           color: new THREE.Color(color.x, color.y, color.z),
           transparent: color.w < 1.0,
@@ -877,6 +885,9 @@ async function loadIFC(buffer: ArrayBuffer, fileName: string) {
           metalness: 0.1,
           clippingPlanes: sectionBoxEnabled ? clippingPlanes : [],
           clipShadows: true,
+          polygonOffset: polyFactor !== 0.0,
+          polygonOffsetFactor: polyFactor,
+          polygonOffsetUnits: polyFactor,
         });
 
         const mesh = new THREE.Mesh(geometry, material);
